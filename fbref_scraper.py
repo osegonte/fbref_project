@@ -10,6 +10,7 @@ import random
 import psycopg2
 from psycopg2.extras import execute_values
 import io
+import hashlib
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -18,6 +19,7 @@ load_dotenv()
 # Create directories if they don't exist
 os.makedirs("logs", exist_ok=True)
 os.makedirs("data", exist_ok=True)
+os.makedirs("data/cache", exist_ok=True)
 
 # Configure logging
 logging.basicConfig(
@@ -30,52 +32,172 @@ logging.basicConfig(
 )
 logger = logging.getLogger("fbref_scraper")
 
-# Add user agent to mimic a browser to avoid being blocked
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-}
+# Rotate user agents to appear more like different browsers
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:90.0) Gecko/20100101 Firefox/90.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:90.0) Gecko/20100101 Firefox/90.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 Edg/91.0.864.59'
+]
 
 class FBrefScraper:
     """Class to scrape football data from FBref.com"""
     
-    def __init__(self, base_url: str = "https://fbref.com/en/comps/9/Premier-League-Stats", years: List[int] = None):
+    def __init__(self, base_url: str = "https://fbref.com/en/comps/9/Premier-League-Stats", 
+                 years: List[int] = None, 
+                 min_delay: int = 5, 
+                 max_delay: int = 10,
+                 cache_dir: str = "data/cache",
+                 max_cache_age: int = 24):
         """
         Initialize the scraper with base URL and years to scrape
         
         Args:
             base_url: Starting URL for the Premier League stats
             years: List of years to scrape (e.g. [2024, 2023, 2022])
+            min_delay: Minimum delay between requests in seconds
+            max_delay: Maximum delay between requests in seconds
+            cache_dir: Directory to store cached HTML files
+            max_cache_age: Maximum age of cached files in hours
         """
         self.base_url = base_url
         self.years = years or [datetime.now().year]
         self.all_matches = []
         self.team_urls = []
         self.data_dir = "data"
+        self.cache_dir = cache_dir
+        self.min_delay = min_delay
+        self.max_delay = max_delay
+        self.max_cache_age = max_cache_age
         
-        # Create data directory if it doesn't exist
-        if not os.path.exists(self.data_dir):
-            os.makedirs(self.data_dir)
+        # Create required directories
+        os.makedirs(self.data_dir, exist_ok=True)
+        os.makedirs(self.cache_dir, exist_ok=True)
     
-    def get_html(self, url: str) -> Optional[str]:
+    def get_random_headers(self):
+        """Get random user agent headers to avoid detection"""
+        return {
+            'User-Agent': random.choice(USER_AGENTS),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Cache-Control': 'max-age=0'
+        }
+    
+    def get_cached_html(self, url: str) -> Optional[str]:
         """
-        Download HTML from URL with error handling and random delay
+        Get HTML from cache if available and not expired
+        
+        Args:
+            url: URL to check cache for
+            
+        Returns:
+            Cached HTML content or None if not cached or expired
+        """
+        url_hash = hashlib.md5(url.encode()).hexdigest()
+        cache_file = os.path.join(self.cache_dir, f"{url_hash}.html")
+        
+        if os.path.exists(cache_file):
+            file_age_hours = (time.time() - os.path.getmtime(cache_file)) / 3600
+            
+            if file_age_hours < self.max_cache_age:
+                logger.debug(f"Using cached version of {url}")
+                try:
+                    with open(cache_file, 'r', encoding='utf-8') as f:
+                        return f.read()
+                except Exception as e:
+                    logger.warning(f"Failed to read cache file for {url}: {e}")
+        
+        return None
+    
+    def save_to_cache(self, url: str, html_content: str) -> bool:
+        """
+        Save HTML content to cache
+        
+        Args:
+            url: URL associated with the content
+            html_content: HTML content to cache
+            
+        Returns:
+            True if successfully cached, False otherwise
+        """
+        url_hash = hashlib.md5(url.encode()).hexdigest()
+        cache_file = os.path.join(self.cache_dir, f"{url_hash}.html")
+        
+        try:
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to cache content for {url}: {e}")
+            return False
+
+    def get_html(self, url: str, max_retries: int = 3) -> Optional[str]:
+        """
+        Download HTML from URL with error handling, caching and exponential backoff
         
         Args:
             url: URL to fetch
+            max_retries: Maximum number of retry attempts
             
         Returns:
             HTML content as string or None if request failed
         """
-        try:
-            # Random delay between 1-3 seconds to be respectful to the server
-            time.sleep(1 + random.random() * 2)
-            
-            response = requests.get(url, headers=HEADERS, timeout=10)
-            response.raise_for_status()
-            return response.text
-        except requests.RequestException as e:
-            logger.error(f"Failed to fetch {url}: {e}")
-            return None
+        # Check cache first
+        cached_html = self.get_cached_html(url)
+        if cached_html:
+            return cached_html
+        
+        # Not cached or expired, fetch it
+        retry_count = 0
+        base_delay = self.min_delay
+        
+        while retry_count <= max_retries:
+            try:
+                # Random delay between requests
+                current_delay = base_delay + random.random() * (self.max_delay - self.min_delay)
+                logger.debug(f"Waiting {current_delay:.2f} seconds before fetching {url}")
+                time.sleep(current_delay)
+                
+                # Get with random headers
+                headers = self.get_random_headers()
+                response = requests.get(url, headers=headers, timeout=15)
+                
+                # If rate limited, back off and retry
+                if response.status_code == 429:
+                    retry_count += 1
+                    base_delay *= 2  # Exponential backoff
+                    
+                    if retry_count <= max_retries:
+                        logger.warning(f"Rate limited, retrying in {base_delay:.2f} seconds (attempt {retry_count}/{max_retries})")
+                        time.sleep(base_delay)
+                        continue
+                    else:
+                        logger.error(f"Maximum retries reached for {url}")
+                        return None
+                
+                # For other errors, fail fast
+                response.raise_for_status()
+                
+                # Cache successful response
+                self.save_to_cache(url, response.text)
+                return response.text
+                
+            except requests.RequestException as e:
+                logger.error(f"Failed to fetch {url}: {e}")
+                retry_count += 1
+                
+                if retry_count <= max_retries and isinstance(e, requests.exceptions.ConnectionError):
+                    logger.info(f"Connection error, retrying in {base_delay} seconds ({retry_count}/{max_retries})")
+                    time.sleep(base_delay)
+                    base_delay *= 2
+                else:
+                    return None
+        
+        return None
 
     def extract_team_urls(self, html: str) -> List[str]:
         """
@@ -165,6 +287,7 @@ class FBrefScraper:
         # Get team page HTML
         team_html = self.get_html(team_url)
         if not team_html:
+            logger.error(f"Failed to get team page HTML for {team_name}")
             return None
             
         # Parse matches
@@ -179,10 +302,12 @@ class FBrefScraper:
         # Get shooting stats
         shooting_link = self.get_shooting_link(team_html)
         if not shooting_link:
+            logger.warning(f"No shooting link found for {team_name}")
             return None
             
         shooting_html = self.get_html(shooting_link)
         if not shooting_html:
+            logger.error(f"Failed to get shooting stats HTML for {team_name}")
             return None
             
         # Parse shooting stats
@@ -234,6 +359,7 @@ class FBrefScraper:
         # Get standings page HTML
         html = self.get_html(url)
         if not html:
+            logger.error(f"Failed to get season page HTML for {year}")
             return [], None
         
         # Extract team URLs
@@ -249,6 +375,8 @@ class FBrefScraper:
             team_df = self.parse_matches_and_shooting(team_url, year)
             if team_df is not None and not team_df.empty:
                 season_dfs.append(team_df)
+            else:
+                logger.warning(f"No valid data found for team at {team_url}")
         
         return season_dfs, previous_season_url
 
@@ -298,6 +426,7 @@ class FBrefScraper:
         all_matches = self.scrape()
         
         if all_matches.empty:
+            logger.warning("No matches found to extract recent matches from")
             return pd.DataFrame()
         
         # Convert date to datetime for sorting
@@ -389,6 +518,10 @@ class FBrefDatabaseManager:
             }
             self.connection_uri = f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{db_name}"
         
+    def get_connection(self):
+        """Get a database connection with context manager"""
+        return psycopg2.connect(**self.connection_params)
+        
     def initialize_db(self):
         """Create database tables if they don't exist"""
         # SQL to create the recent_matches table
@@ -425,26 +558,61 @@ class FBrefDatabaseManager:
         CREATE INDEX IF NOT EXISTS idx_recent_matches_date ON recent_matches(date);
         CREATE INDEX IF NOT EXISTS idx_recent_matches_team ON recent_matches(team);
         CREATE INDEX IF NOT EXISTS idx_recent_matches_season ON recent_matches(season);
+        
+        -- Teams Table for team information
+        CREATE TABLE IF NOT EXISTS teams (
+            team_id SERIAL PRIMARY KEY,
+            team_name VARCHAR(50) UNIQUE NOT NULL,
+            country VARCHAR(50),
+            league VARCHAR(50),
+            logo_url VARCHAR(255),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        
+        -- Players Table for player information
+        CREATE TABLE IF NOT EXISTS players (
+            player_id SERIAL PRIMARY KEY,
+            player_name VARCHAR(100) NOT NULL,
+            team_id INTEGER REFERENCES teams(team_id),
+            position VARCHAR(20),
+            nationality VARCHAR(50),
+            birth_date DATE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (player_name, team_id)
+        );
+        
+        -- League Table for storing standings
+        CREATE TABLE IF NOT EXISTS league_table (
+            id SERIAL PRIMARY KEY,
+            team_id INTEGER REFERENCES teams(team_id),
+            season INTEGER NOT NULL,
+            rank INTEGER,
+            matches_played INTEGER,
+            wins INTEGER,
+            draws INTEGER,
+            losses INTEGER,
+            goals_for INTEGER,
+            goals_against INTEGER,
+            goal_diff INTEGER,
+            points INTEGER,
+            points_per_match FLOAT,
+            xg FLOAT,
+            xga FLOAT,
+            xg_diff FLOAT,
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (team_id, season)
+        );
         """
         
-        conn = None
-        try:
-            # Connect to PostgreSQL
-            conn = psycopg2.connect(**self.connection_params)
-            cursor = conn.cursor()
-            
-            # Create table and indexes
-            cursor.execute(create_table_sql)
-            
-            # Commit changes
-            conn.commit()
-            logger.info("Database initialized successfully")
-            
-        except (Exception, psycopg2.DatabaseError) as error:
-            logger.error(f"Error initializing database: {error}")
-        finally:
-            if conn is not None:
-                conn.close()
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                # Create table and indexes
+                cursor.execute(create_table_sql)
+                
+                # Commit changes happens automatically with context manager
+                logger.info("Database initialized successfully")
     
     def store_recent_matches(self, df):
         """Store recent matches with upsert logic"""
@@ -500,27 +668,14 @@ class FBrefDatabaseManager:
                     value.append(None)
             values.append(tuple(value))
         
-        conn = None
-        try:
-            # Connect to PostgreSQL
-            conn = psycopg2.connect(**self.connection_params)
-            cursor = conn.cursor()
-            
-            # Execute upsert
-            execute_values(cursor, upsert_query, values)
-            
-            # Commit changes
-            conn.commit()
-            
-            logger.info(f"Stored/updated {len(df)} matches in the database")
-            return len(df)
-            
-        except (Exception, psycopg2.DatabaseError) as error:
-            logger.error(f"Error storing matches: {error}")
-            return 0
-        finally:
-            if conn is not None:
-                conn.close()
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                # Execute upsert
+                execute_values(cursor, upsert_query, values)
+                # Commit happens automatically with context manager
+                
+                logger.info(f"Stored/updated {len(df)} matches in the database")
+                return len(df)
     
     def get_recent_team_matches(self, team, limit=7):
         """Get recent matches for a specific team"""
@@ -531,23 +686,14 @@ class FBrefDatabaseManager:
         LIMIT %s
         """
         
-        conn = None
-        try:
-            # Connect to PostgreSQL
-            conn = psycopg2.connect(**self.connection_params)
-            
-            # Query data and load into DataFrame
-            df = pd.read_sql_query(query, conn, params=(team, limit))
+        with self.get_connection() as conn:
+            # Using SQLAlchemy's connection for pandas
+            from sqlalchemy import create_engine
+            engine = create_engine(self.connection_uri)
+            df = pd.read_sql_query(query, engine, params=(team, limit))
             
             logger.info(f"Retrieved {len(df)} recent matches for {team}")
             return df
-            
-        except (Exception, psycopg2.DatabaseError) as error:
-            logger.error(f"Error retrieving matches: {error}")
-            return pd.DataFrame()
-        finally:
-            if conn is not None:
-                conn.close()
     
     def get_all_recent_matches(self, days=30):
         """Get all matches in the last N days"""
@@ -560,45 +706,33 @@ class FBrefDatabaseManager:
         ORDER BY date DESC
         """
         
-        conn = None
-        try:
-            # Connect to PostgreSQL
-            conn = psycopg2.connect(**self.connection_params)
-            
-            # Query data and load into DataFrame
-            df = pd.read_sql_query(query, conn, params=(cutoff_date,))
+        with self.get_connection() as conn:
+            # Using SQLAlchemy's connection for pandas
+            from sqlalchemy import create_engine
+            engine = create_engine(self.connection_uri)
+            df = pd.read_sql_query(query, engine, params=(cutoff_date,))
             
             logger.info(f"Retrieved {len(df)} matches from the last {days} days")
             return df
-            
-        except (Exception, psycopg2.DatabaseError) as error:
-            logger.error(f"Error retrieving matches: {error}")
-            return pd.DataFrame()
-        finally:
-            if conn is not None:
-                conn.close()
     
     def execute_query(self, query, params=None):
         """Execute a custom SQL query"""
-        conn = None
         try:
-            # Connect to PostgreSQL
-            conn = psycopg2.connect(**self.connection_params)
+            # Using SQLAlchemy's connection for pandas
+            from sqlalchemy import create_engine
+            engine = create_engine(self.connection_uri)
             
             # Query data and load into DataFrame
             if params:
-                df = pd.read_sql_query(query, conn, params=params)
+                df = pd.read_sql_query(query, engine, params=params)
             else:
-                df = pd.read_sql_query(query, conn)
+                df = pd.read_sql_query(query, engine)
             
             return df
             
-        except (Exception, psycopg2.DatabaseError) as error:
+        except Exception as error:
             logger.error(f"Error executing query: {error}")
             return pd.DataFrame()
-        finally:
-            if conn is not None:
-                conn.close()
 
 
 def main():
@@ -615,6 +749,8 @@ def main():
         db_port = DB_CONFIG['port']
         base_url = SCRAPER_CONFIG['base_url']
         matches_to_keep = SCRAPER_CONFIG['matches_to_keep']
+        min_delay = SCRAPER_CONFIG.get('sleep_time_range', (5, 10))[0]
+        max_delay = SCRAPER_CONFIG.get('sleep_time_range', (5, 10))[1]
     except (ImportError, KeyError):
         # Fallback to environment variables
         db_uri = os.getenv('PG_URI')
@@ -625,13 +761,20 @@ def main():
         db_port = os.getenv('PG_PORT', '5432')
         base_url = "https://fbref.com/en/comps/9/Premier-League-Stats"
         matches_to_keep = 7
+        min_delay = 5
+        max_delay = 10
     
     # Define the year(s) to scrape (current season)
     current_year = datetime.now().year
     
     # Initialize the scraper
     logger.info(f"Initializing scraper with base URL: {base_url}")
-    scraper = FBrefScraper(base_url=base_url, years=[current_year])
+    scraper = FBrefScraper(
+        base_url=base_url, 
+        years=[current_year],
+        min_delay=min_delay,
+        max_delay=max_delay
+    )
     
     # Initialize database manager
     if db_uri:
@@ -705,5 +848,4 @@ if __name__ == "__main__":
     print("Starting FBref scraper...")
     main()
     print("Completed scraping.")
-    
-    main()
+    # The duplicate main() call has been removed

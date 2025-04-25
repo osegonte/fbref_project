@@ -1,0 +1,126 @@
+2025-04-25 23:03:28,654 - INFO - Initializing scraper with base URL: https://fbref.com/en/comps/9/Premier-League-Stats
+2025-04-25 23:03:28,654 - INFO - Connecting to database using URI
+2025-04-25 23:03:28,693 - INFO - Database initialized successfully
+2025-04-25 23:03:28,693 - INFO - Starting to scrape recent matches...
+2025-04-25 23:03:28,693 - INFO - Scraping season 2025 from https://fbref.com/en/comps/9/Premier-League-Stats
+2025-04-25 23:03:30,824 - INFO - Found 20 teams
+2025-04-25 23:03:31,017 - INFO - Scraping Liverpool for 2025 season
+2025-04-25 23:03:38,369 - INFO - Scraping Arsenal for 2025 season
+2025-04-25 23:03:45,043 - INFO - Scraping Manchester City for 2025 season
+2025-04-25 23:03:53,146 - INFO - Scraping Nottingham Forest for 2025 season
+2025-04-25 23:03:57,436 - INFO - Scraping Newcastle United for 2025 season
+2025-04-25 23:04:02,556 - INFO - Scraping Chelsea for 2025 season
+2025-04-25 23:04:07,377 - INFO - Scraping Aston Villa for 2025 season
+2025-04-25 23:04:12,791 - INFO - Scraping Bournemouth for 2025 season
+2025-04-25 23:04:18,511 - INFO - Scraping Fulham for 2025 season
+2025-04-25 23:04:24,629 - INFO - Scraping Brighton and Hove Albion for 2025 season
+2025-04-25 23:04:29,252 - ERROR - Failed to fetch https://fbref.com/en/squads/d07537b9/2024-2025/matchlogs/all_comps/shooting/Brighton-and-Hove-Albion-Match-Logs-All-Competitions: 429 Client Error: Too Many Requests for url: https://fbref.com/en/squads/d07537b9/2024-2025/matchlogs/all_comps/shooting/Brighton-and-Hove-Albion-Match-Logs-All-Competitions
+2025-04-25 23:04:29,253 - INFO - Scraping Brentford for 2025 season
+2025-04-25 23:04:32,267 - ERROR - Failed to fetch https://fbref.com/en/squads/cd051869/Brentford-Stats: 429 Client Error: Too Many Requests for url: https://fbref.com/en/squads/cd051869/Brentford-Stats
+2025-04-25 23:04:32,268 - INFO - Scraping Crystal Palace for 2025 season
+2025-04-25 23:04:34,309 - ERROR - Failed to fetch https://fbref.com/en/squads/47c64c55/Crystal-Palace-Stats: 429 Client Error: Too Many Requests for url: https://fbref.com/en/squads/47c64c55/Crystal-Palace-Stats
+2025-04-25 23:04:34,309 - INFO - Scraping Everton for 2025 season
+2025-04-25 23:04:35,844 - ERROR - Failed to fetch https://fbref.com/en/squads/d3fd31cc/Everton-Stats: 429 Client Error: Too Many Requests for url: https://fbref.com/en/squads/d3fd31cc/Everton-Stats
+2025-04-25 23:04:35,845 - INFO - Scraping Manchester United for 2025 season
+2025-04-25 23:04:38,490 - ERROR - Failed to fetch https://fbref.com/en/squads/19538871/Manchester-United-Stats: 429 Client Error: Too Many Requests for url: https://fbref.com/en/squads/19538871/Manchester-United-Stats
+2025-04-25 23:04:38,490 - INFO - Scraping Wolverhampton Wanderers for 2025 season
+2025-04-25 23:04:39,978 - ERROR - Failed to fetch https://fbref.com/en/squads/8cec06e1/Wolverhampton-Wanderers-Stats: 429 Client Error: Too Many Requests for url: https://fbref.com/en/squads/8cec06e1/Wolverhampton-Wanderers-Stats
+2025-04-25 23:04:39,979 - INFO - Scraping Tottenham Hotspur for 2025 season
+2025-04-25 23:04:41,573 - ERROR - Failed to fetch https://fbref.com/en/squads/361ca564/Tottenham-Hotspur-Stats: 429 Client Error: Too Many Requests for url: https://fbref.com/en/squads/361ca564/Tottenham-Hotspur-Stats
+2025-04-25 23:04:41,574 - INFO - Scraping West Ham United for 2025 season
+2025-04-25 23:04:42,957 - ERROR - Failed to fetch https://fbref.com/en/squads/7c21e445/West-Ham-United-Stats: 429 Client Error: Too Many Requests for url: https://fbref.com/en/squads/7c21e445/West-Ham-United-Stats
+2025-04-25 23:04:42,958 - INFO - Scraping Ipswich Town for 2025 season
+2025-04-25 23:04:44,604 - ERROR - Failed to fetch https://fbref.com/en/squads/b74092de/Ipswich-Town-Stats: 429 Client Error: Too Many Requests for url: https://fbref.com/en/squads/b74092de/Ipswich-Town-Stats
+2025-04-25 23:04:44,604 - INFO - Scraping Leicester City for 2025 season
+2025-04-25 23:04:46,441 - ERROR - Failed to fetch https://fbref.com/en/squads/a2d435b3/Leicester-City-Stats: 429 Client Error: Too Many Requests for url: https://fbref.com/en/squads/a2d435b3/Leicester-City-Stats
+2025-04-25 23:04:46,441 - INFO - Scraping Southampton for 2025 season
+2025-04-25 23:04:48,909 - ERROR - Failed to fetch https://fbref.com/en/squads/33c895d4/Southampton-Stats: 429 Client Error: Too Many Requests for url: https://fbref.com/en/squads/33c895d4/Southampton-Stats
+2025-04-25 23:04:48,948 - INFO - Data saved to data/recent_matches.csv
+2025-04-25 23:04:48,948 - INFO - Saved backup to data/recent_matches.csv
+2025-04-25 23:04:48,968 - INFO - Stored/updated 63 matches in the database
+2025-04-25 23:04:49,112 - INFO - Retrieved 7 recent matches for Liverpool
+2025-04-25 23:04:49,123 - INFO - Initializing scraper with base URL: https://fbref.com/en/comps/9/Premier-League-Stats
+2025-04-25 23:04:49,123 - INFO - Connecting to database using URI
+2025-04-25 23:04:49,129 - INFO - Database initialized successfully
+2025-04-25 23:04:49,129 - INFO - Starting to scrape recent matches...
+2025-04-25 23:04:49,129 - INFO - Scraping season 2025 from https://fbref.com/en/comps/9/Premier-League-Stats
+2025-04-25 23:04:50,947 - ERROR - Failed to fetch https://fbref.com/en/comps/9/Premier-League-Stats: 429 Client Error: Too Many Requests for url: https://fbref.com/en/comps/9/Premier-League-Stats
+2025-04-25 23:04:50,948 - WARNING - Could not find previous season URL after 2025
+2025-04-25 23:04:50,948 - ERROR - No data collected
+2025-04-25 23:04:50,950 - ERROR - No recent matches found—nothing to store.
+2025-04-25 23:14:42,902 - INFO - Initializing scraper with base URL: https://fbref.com/en/comps/9/Premier-League-Stats
+2025-04-25 23:14:42,903 - INFO - Connecting to database using URI
+2025-04-25 23:14:42,955 - INFO - Database initialized successfully
+2025-04-25 23:14:42,956 - INFO - Starting to scrape recent matches...
+2025-04-25 23:14:42,956 - INFO - Scraping season 2025 from https://fbref.com/en/comps/9/Premier-League-Stats
+2025-04-25 23:14:45,859 - WARNING - Rate limited, retrying in 2.00 seconds (attempt 1/3)
+2025-04-25 23:14:51,478 - WARNING - Rate limited, retrying in 4.00 seconds (attempt 2/3)
+2025-04-25 23:15:20,786 - INFO - Initializing scraper with base URL: https://fbref.com/en/comps/9/Premier-League-Stats
+2025-04-25 23:15:20,786 - INFO - Connecting to database using URI
+2025-04-25 23:15:20,797 - INFO - Database initialized successfully
+2025-04-25 23:15:20,797 - INFO - Starting to scrape recent matches...
+2025-04-25 23:15:20,797 - INFO - Scraping season 2025 from https://fbref.com/en/comps/9/Premier-League-Stats
+2025-04-25 23:15:24,249 - INFO - Found 20 teams
+2025-04-25 23:15:24,432 - INFO - Scraping Liverpool for 2025 season
+2025-04-25 23:15:29,451 - INFO - Scraping Arsenal for 2025 season
+2025-04-25 23:15:33,467 - INFO - Scraping Manchester City for 2025 season
+2025-04-25 23:15:38,435 - INFO - Scraping Nottingham Forest for 2025 season
+2025-04-25 23:15:44,023 - INFO - Scraping Newcastle United for 2025 season
+2025-04-25 23:15:49,958 - INFO - Scraping Chelsea for 2025 season
+2025-04-25 23:15:54,899 - INFO - Scraping Aston Villa for 2025 season
+2025-04-25 23:15:59,559 - INFO - Scraping Bournemouth for 2025 season
+2025-04-25 23:16:04,313 - INFO - Scraping Fulham for 2025 season
+2025-04-25 23:16:06,864 - WARNING - Rate limited, retrying in 2.00 seconds (attempt 1/3)
+2025-04-25 23:16:11,866 - WARNING - Rate limited, retrying in 4.00 seconds (attempt 2/3)
+2025-04-25 23:16:20,177 - WARNING - Rate limited, retrying in 8.00 seconds (attempt 3/3)
+2025-04-25 23:16:36,844 - ERROR - Maximum retries reached for https://fbref.com/en/squads/fd962109/Fulham-Stats
+2025-04-25 23:16:36,845 - ERROR - Failed to get team page HTML for Fulham
+2025-04-25 23:16:36,845 - WARNING - No valid data found for team at https://fbref.com/en/squads/fd962109/Fulham-Stats
+2025-04-25 23:16:36,846 - INFO - Scraping Brighton and Hove Albion for 2025 season
+2025-04-25 23:16:40,074 - WARNING - Rate limited, retrying in 2.00 seconds (attempt 1/3)
+2025-04-25 23:16:44,903 - WARNING - Rate limited, retrying in 4.00 seconds (attempt 2/3)
+2025-04-25 23:16:53,755 - WARNING - Rate limited, retrying in 8.00 seconds (attempt 3/3)
+2025-04-25 23:18:20,204 - INFO - Initializing scraper with base URL: https://fbref.com/en/comps/9/Premier-League-Stats
+2025-04-25 23:18:20,204 - INFO - Connecting to database using URI
+2025-04-25 23:18:20,215 - INFO - Database initialized successfully
+2025-04-25 23:18:20,215 - INFO - Starting to scrape recent matches...
+2025-04-25 23:18:20,215 - INFO - Scraping season 2025 from https://fbref.com/en/comps/9/Premier-League-Stats
+2025-04-25 23:18:20,398 - INFO - Found 20 teams
+2025-04-25 23:18:20,600 - INFO - Scraping Liverpool for 2025 season
+2025-04-25 23:18:20,782 - INFO - Scraping Arsenal for 2025 season
+2025-04-25 23:18:20,960 - INFO - Scraping Manchester City for 2025 season
+2025-04-25 23:18:21,191 - INFO - Scraping Nottingham Forest for 2025 season
+2025-04-25 23:18:21,345 - INFO - Scraping Newcastle United for 2025 season
+2025-04-25 23:18:21,507 - INFO - Scraping Chelsea for 2025 season
+2025-04-25 23:18:21,734 - INFO - Scraping Aston Villa for 2025 season
+2025-04-25 23:18:21,913 - INFO - Scraping Bournemouth for 2025 season
+2025-04-25 23:18:22,092 - INFO - Scraping Fulham for 2025 season
+2025-04-25 23:18:25,030 - WARNING - Rate limited, retrying in 2.00 seconds (attempt 1/3)
+2025-04-25 23:18:29,194 - WARNING - Rate limited, retrying in 4.00 seconds (attempt 2/3)
+2025-04-25 23:18:38,178 - WARNING - Rate limited, retrying in 8.00 seconds (attempt 3/3)
+2025-04-25 23:18:55,408 - ERROR - Maximum retries reached for https://fbref.com/en/squads/fd962109/Fulham-Stats
+2025-04-25 23:18:55,408 - ERROR - Failed to get team page HTML for Fulham
+2025-04-25 23:18:55,409 - WARNING - No valid data found for team at https://fbref.com/en/squads/fd962109/Fulham-Stats
+2025-04-25 23:18:55,409 - INFO - Scraping Brighton and Hove Albion for 2025 season
+2025-04-25 23:18:58,186 - WARNING - Rate limited, retrying in 2.00 seconds (attempt 1/3)
+2025-04-25 23:19:03,552 - WARNING - Rate limited, retrying in 4.00 seconds (attempt 2/3)
+2025-04-25 23:19:12,150 - WARNING - Rate limited, retrying in 8.00 seconds (attempt 3/3)
+2025-04-25 23:19:28,644 - ERROR - Maximum retries reached for https://fbref.com/en/squads/d07537b9/Brighton-and-Hove-Albion-Stats
+2025-04-25 23:19:28,645 - ERROR - Failed to get team page HTML for Brighton and Hove Albion
+2025-04-25 23:19:28,645 - WARNING - No valid data found for team at https://fbref.com/en/squads/d07537b9/Brighton-and-Hove-Albion-Stats
+2025-04-25 23:19:28,645 - INFO - Scraping Brentford for 2025 season
+2025-04-25 23:19:30,230 - WARNING - Rate limited, retrying in 2.00 seconds (attempt 1/3)
+2025-04-25 23:19:35,906 - WARNING - Rate limited, retrying in 4.00 seconds (attempt 2/3)
+2025-04-25 23:19:44,430 - WARNING - Rate limited, retrying in 8.00 seconds (attempt 3/3)
+2025-04-25 23:20:02,321 - ERROR - Maximum retries reached for https://fbref.com/en/squads/cd051869/Brentford-Stats
+2025-04-25 23:20:02,322 - ERROR - Failed to get team page HTML for Brentford
+2025-04-25 23:20:02,322 - WARNING - No valid data found for team at https://fbref.com/en/squads/cd051869/Brentford-Stats
+2025-04-25 23:20:02,322 - INFO - Scraping Crystal Palace for 2025 season
+2025-04-25 23:20:03,696 - WARNING - Rate limited, retrying in 2.00 seconds (attempt 1/3)
+2025-04-25 23:20:07,766 - WARNING - Rate limited, retrying in 4.00 seconds (attempt 2/3)
+2025-04-25 23:20:17,659 - WARNING - Rate limited, retrying in 8.00 seconds (attempt 3/3)
+2025-04-25 23:20:35,372 - ERROR - Maximum retries reached for https://fbref.com/en/squads/47c64c55/Crystal-Palace-Stats
+2025-04-25 23:20:35,373 - ERROR - Failed to get team page HTML for Crystal Palace
+2025-04-25 23:20:35,373 - WARNING - No valid data found for team at https://fbref.com/en/squads/47c64c55/Crystal-Palace-Stats
+2025-04-25 23:20:35,373 - INFO - Scraping Everton for 2025 season
+2025-04-25 23:20:37,291 - WARNING - Rate limited, retrying in 2.00 seconds (attempt 1/3)
