@@ -1,18 +1,19 @@
-import requests
 import pandas as pd
 import time
 from bs4 import BeautifulSoup
 import logging
 import os
+import json
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Set
 import random
 import psycopg2
 from psycopg2.extras import execute_values
 import io
 import hashlib
+import sys
 from dotenv import load_dotenv
-from rate_limit_handler import RateLimitHandler
+from improved_rate_limit_handler import RateLimitHandler
 from proxy_helper import ProxyManager
 
 # Load environment variables
@@ -34,29 +35,32 @@ logging.basicConfig(
 )
 logger = logging.getLogger("fbref_scraper")
 
-# Rotate user agents to appear more like different browsers
+# Expanded list of User Agents to better mimic real browsers
 USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:90.0) Gecko/20100101 Firefox/90.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:90.0) Gecko/20100101 Firefox/90.0',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 Edg/91.0.864.59',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
-    'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:95.0) Gecko/20100101 Firefox/95.0',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.93 Safari/537.36 OPR/82.0.4227.33'
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.3 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36 Edg/112.0.1722.34',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/111.0',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/111.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36 Edg/111.0.1661.54',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36 OPR/97.0.0.0',
+    'Mozilla/5.0 (Windows NT 10.0; rv:112.0) Gecko/20100101 Firefox/112.0'
 ]
 
 class FBrefScraper:
-    """Class to scrape football data from FBref.com"""
+    """Class to scrape football data from FBref.com with improved rate limit handling"""
     
     def __init__(self, base_url: str = "https://fbref.com/en/comps/9/Premier-League-Stats", 
                  years: List[int] = None, 
-                 min_delay: int = 10, 
-                 max_delay: int = 20,
+                 min_delay: int = 15, 
+                 max_delay: int = 30,
                  cache_dir: str = "data/cache",
-                 max_cache_age: int = 48):
+                 max_cache_age: int = 168):  # 1 week cache
         """
         Initialize the scraper with base URL and years to scrape
         
@@ -66,7 +70,7 @@ class FBrefScraper:
             min_delay: Minimum delay between requests in seconds
             max_delay: Maximum delay between requests in seconds
             cache_dir: Directory to store cached HTML files
-            max_cache_age: Maximum age of cached files in hours
+            max_cache_age: Maximum age of cached files in hours (default: 1 week)
         """
         self.base_url = base_url
         self.years = years or [datetime.now().year]
@@ -77,6 +81,7 @@ class FBrefScraper:
         self.min_delay = min_delay
         self.max_delay = max_delay
         self.max_cache_age = max_cache_age
+        self.processed_teams = []
         
         # Create a session for persistent connections
         self.session = requests.Session()
@@ -84,25 +89,68 @@ class FBrefScraper:
         # Initialize the rate limit handler
         self.rate_handler = RateLimitHandler(min_delay=min_delay, max_delay=max_delay)
         
+        # Try to load previous rate limiting state
+        self.rate_handler.load_state()
+        
         # Initialize the proxy manager
         self.proxy_manager = ProxyManager()
         
         # Create required directories
         os.makedirs(self.data_dir, exist_ok=True)
         os.makedirs(self.cache_dir, exist_ok=True)
+        
+        # Initialize browser-like session
+        self.init_browser_session()
+    
+    def init_browser_session(self):
+        """Initialize a session with browser-like behavior"""
+        self.session = requests.Session()
+        
+        # First, visit the homepage to get cookies
+        headers = self.get_random_headers()
+        try:
+            self.session.get("https://fbref.com/", headers=headers, timeout=20)
+            time.sleep(random.uniform(2, 5))
+            
+            # Then visit a few random pages to simulate normal browsing
+            sample_pages = [
+                "https://fbref.com/en/",
+                "https://fbref.com/en/comps/",
+                "https://fbref.com/en/comps/9/Premier-League-Stats"
+            ]
+            
+            for page in random.sample(sample_pages, 2):
+                self.session.get(page, headers=headers, timeout=20)
+                time.sleep(random.uniform(3, 7))
+                
+            logger.info("Browser session initialized with cookies")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize browser session: {e}")
+            return False
     
     def get_random_headers(self):
         """Get random user agent headers to avoid detection"""
-        return {
-            'User-Agent': random.choice(USER_AGENTS),
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
+        user_agent = random.choice(USER_AGENTS)
+        
+        # Add browser-like accept headers
+        headers = {
+            'User-Agent': user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-User': '?1',
             'Cache-Control': 'max-age=0',
             'Referer': 'https://fbref.com/',
             'DNT': '1'
         }
+        
+        return headers
     
     def get_cached_html(self, url: str) -> Optional[str]:
         """
@@ -151,6 +199,32 @@ class FBrefScraper:
         except Exception as e:
             logger.warning(f"Failed to cache content for {url}: {e}")
             return False
+    
+    def is_rate_limited(self, response):
+        """
+        Check if a response indicates rate limiting
+        
+        Args:
+            response: The requests response object
+            
+        Returns:
+            True if rate limited, False otherwise
+        """
+        # Check for 429 status code
+        if response.status_code == 429:
+            return True
+            
+        # Check for rate limit messages in the content
+        rate_limit_indicators = [
+            "too many requests",
+            "rate limit exceeded",
+            "please slow down",
+            "try again later"
+        ]
+        
+        # Convert response content to lowercase string for checking
+        content = response.text.lower()
+        return any(indicator in content for indicator in rate_limit_indicators)
 
     def get_html(self, url: str, max_retries: int = 3) -> Optional[str]:
         """
@@ -170,6 +244,7 @@ class FBrefScraper:
         
         # Not cached or expired, fetch it
         retry_count = 0
+        current_proxy = None
         
         while retry_count <= max_retries:
             try:
@@ -181,16 +256,32 @@ class FBrefScraper:
                 
                 # Get proxy if available
                 proxies = self.proxy_manager.get_proxy()
+                current_proxy = proxies
+                
+                # Add referrer to make request look more natural
+                if 'Referer' not in headers:
+                    base_domain = "/".join(url.split("/")[:3])
+                    headers['Referer'] = base_domain
                 
                 # Make the request
-                response = self.session.get(url, headers=headers, proxies=proxies, timeout=20)
+                response = self.session.get(
+                    url, 
+                    headers=headers, 
+                    proxies=proxies, 
+                    timeout=30,
+                    allow_redirects=True
+                )
                 
-                # If rate limited, back off and retry
-                if response.status_code == 429:
+                # Check for rate limiting
+                if self.is_rate_limited(response):
                     retry_count += 1
                     
                     # Handle rate limit with rate_handler
                     should_retry, backoff_time = self.rate_handler.handle_rate_limit(retry_count, max_retries)
+                    
+                    # Mark proxy as failed
+                    if current_proxy:
+                        self.proxy_manager.mark_proxy_failed(current_proxy)
                     
                     if should_retry:
                         time.sleep(backoff_time)
@@ -202,14 +293,24 @@ class FBrefScraper:
                 # For other errors, fail fast
                 response.raise_for_status()
                 
+                # Mark proxy as successful
+                if current_proxy:
+                    self.proxy_manager.mark_proxy_success(current_proxy)
+                
                 # Reset rate limit counter on success
                 self.rate_handler.reset_after_success()
+                
+                # Save rate limit state
+                self.rate_handler.save_state()
                 
                 # Cache successful response
                 self.save_to_cache(url, response.text)
                 return response.text
                 
             except requests.RequestException as e:
+                if current_proxy:
+                    self.proxy_manager.mark_proxy_failed(current_proxy)
+                
                 logger.error(f"Failed to fetch {url}: {e}")
                 retry_count += 1
                 
@@ -234,10 +335,42 @@ class FBrefScraper:
         """
         soup = BeautifulSoup(html, 'html.parser')
         try:
-            standings_table = soup.select('table.stats_table')[0]
+            # Try multiple selectors to find the table
+            selectors = ['table.stats_table', 'table#results', '#standings_1 table']
+            standings_table = None
+            
+            for selector in selectors:
+                tables = soup.select(selector)
+                if tables:
+                    standings_table = tables[0]
+                    break
+            
+            if not standings_table:
+                # Fallback: try to find any table that might contain teams
+                tables = soup.find_all('table')
+                if tables:
+                    # Look for tables that likely contain teams
+                    for table in tables:
+                        if table.find('a', href=lambda href: href and '/squads/' in href):
+                            standings_table = table
+                            break
+            
+            if not standings_table:
+                logger.error("Could not find standings table in HTML")
+                return []
+                
             links = [l.get("href") for l in standings_table.find_all('a')]
             links = [l for l in links if l and '/squads/' in l]
-            return [f"https://fbref.com{l}" for l in links]
+            
+            # Remove duplicates while preserving order
+            unique_links = []
+            seen = set()
+            for link in links:
+                if link not in seen:
+                    unique_links.append(link)
+                    seen.add(link)
+            
+            return [f"https://fbref.com{l}" for l in unique_links]
         except (IndexError, AttributeError) as e:
             logger.error(f"Failed to extract team URLs: {e}")
             return []
@@ -254,8 +387,18 @@ class FBrefScraper:
         """
         soup = BeautifulSoup(html, 'html.parser')
         try:
-            prev_link = soup.select("a.prev")[0]
-            return f"https://fbref.com{prev_link.get('href')}"
+            # Look for links with 'prev' class or text containing 'Previous Season'
+            prev_links = soup.select("a.prev")
+            if prev_links:
+                return f"https://fbref.com{prev_links[0].get('href')}"
+                
+            # Alternative approach
+            all_links = soup.find_all('a')
+            for link in all_links:
+                if link.text and ('previous' in link.text.lower() or 'prev' in link.text.lower()) and 'season' in link.text.lower():
+                    return f"https://fbref.com{link.get('href')}"
+                
+            return None
         except (IndexError, AttributeError) as e:
             logger.error(f"Failed to extract previous season URL: {e}")
             return None
@@ -284,14 +427,25 @@ class FBrefScraper:
             URL for the shooting stats or None if not found
         """
         soup = BeautifulSoup(html, 'html.parser')
-        links = [l.get("href") for l in soup.find_all('a')]
-        links = [l for l in links if l and 'all_comps/shooting/' in l]
         
-        if not links:
-            logger.warning("No shooting stats link found")
-            return None
+        # Try multiple approaches to find the shooting stats link
+        
+        # First approach: direct link containing 'shooting'
+        links = [l.get("href") for l in soup.find_all('a')]
+        shooting_links = [l for l in links if l and 'all_comps/shooting/' in l]
+        
+        if shooting_links:
+            return f"https://fbref.com{shooting_links[0]}"
             
-        return f"https://fbref.com{links[0]}"
+        # Second approach: look for links with shooting text
+        for link in soup.find_all('a'):
+            if link.text and 'shooting' in link.text.lower():
+                href = link.get('href')
+                if href:
+                    return f"https://fbref.com{href}"
+        
+        logger.warning("No shooting stats link found")
+        return None
 
     def get_standard_stats_link(self, html: str) -> Optional[str]:
         """
@@ -304,14 +458,25 @@ class FBrefScraper:
             URL for the standard stats or None if not found
         """
         soup = BeautifulSoup(html, 'html.parser')
-        links = [l.get("href") for l in soup.find_all('a')]
-        links = [l for l in links if l and 'all_comps/stats/' in l]
         
-        if not links:
-            logger.warning("No standard stats link found")
-            return None
+        # Multiple approaches to find standard stats link
+        
+        # First approach: direct link containing 'stats'
+        links = [l.get("href") for l in soup.find_all('a')]
+        standard_links = [l for l in links if l and 'all_comps/stats/' in l]
+        
+        if standard_links:
+            return f"https://fbref.com{standard_links[0]}"
             
-        return f"https://fbref.com{links[0]}"
+        # Second approach: look for links with 'standard' or 'stats' text
+        for link in soup.find_all('a'):
+            if link.text and ('standard' in link.text.lower() or 'stats' in link.text.lower()):
+                href = link.get('href')
+                if href and 'matchlogs' in href:
+                    return f"https://fbref.com{href}"
+        
+        logger.warning("No standard stats link found")
+        return None
 
     def parse_matches_and_stats(self, team_url: str, year: int) -> Optional[pd.DataFrame]:
         """
@@ -337,33 +502,53 @@ class FBrefScraper:
         try:
             # Using StringIO to handle the warning about literal HTML
             html_io = io.StringIO(team_html)
-            matches = pd.read_html(html_io, match="Scores & Fixtures")[0]
+            tables = pd.read_html(html_io)
+            
+            # Find the table with scores and fixtures
+            matches_df = None
+            for table in tables:
+                if 'Date' in table.columns and 'Opponent' in table.columns:
+                    matches_df = table
+                    break
+                    
+            if matches_df is None:
+                logger.error(f"Failed to find matches table for {team_name}")
+                return None
+                
         except Exception as e:
             logger.error(f"Failed to parse matches for {team_name}: {e}")
             return None
             
         # Get shooting stats
         shooting_link = self.get_shooting_link(team_html)
-        if not shooting_link:
+        shooting = None
+        
+        if shooting_link:
+            shooting_html = self.get_html(shooting_link)
+            if shooting_html:
+                try:
+                    # Using StringIO to handle the warning about literal HTML
+                    html_io = io.StringIO(shooting_html)
+                    shooting_tables = pd.read_html(html_io)
+                    
+                    # Find shooting table
+                    for table in shooting_tables:
+                        if isinstance(table.columns, pd.MultiIndex):
+                            table.columns = table.columns.droplevel(0)
+                        
+                        # Check if it's likely the shooting table
+                        if 'Date' in table.columns and ('Sh' in table.columns or 'Shots' in table.columns):
+                            shooting = table
+                            break
+                            
+                    if shooting is None:
+                        logger.warning(f"No shooting table found for {team_name}")
+                except Exception as e:
+                    logger.error(f"Failed to parse shooting stats for {team_name}: {e}")
+            else:
+                logger.error(f"Failed to get shooting stats HTML for {team_name}")
+        else:
             logger.warning(f"No shooting link found for {team_name}")
-            return None
-            
-        shooting_html = self.get_html(shooting_link)
-        if not shooting_html:
-            logger.error(f"Failed to get shooting stats HTML for {team_name}")
-            return None
-            
-        # Parse shooting stats
-        try:
-            # Using StringIO to handle the warning about literal HTML
-            html_io = io.StringIO(shooting_html)
-            shooting = pd.read_html(html_io, match="Shooting")[0]
-            # Fix multi-level column headers
-            if isinstance(shooting.columns, pd.MultiIndex):
-                shooting.columns = shooting.columns.droplevel(0)
-        except Exception as e:
-            logger.error(f"Failed to parse shooting stats for {team_name}: {e}")
-            return None
         
         # Get standard stats for corners
         standard_stats_link = self.get_standard_stats_link(team_html)
@@ -382,34 +567,68 @@ class FBrefScraper:
                             stats_table.columns = stats_table.columns.droplevel(0)
                         
                         # Look for corner kicks columns (CK or similar)
-                        if 'CK' in stats_table.columns:
-                            corners_data = stats_table[['Date', 'CK']]
-                            break
-                        elif 'Corners' in stats_table.columns:
-                            corners_data = stats_table[['Date', 'Corners']]
-                            corners_data.rename(columns={'Corners': 'CK'}, inplace=True)
+                        if 'Date' in stats_table.columns and ('CK' in stats_table.columns or 'Corners' in stats_table.columns):
+                            corners_col = 'CK' if 'CK' in stats_table.columns else 'Corners'
+                            corners_data = stats_table[['Date', corners_col]].copy()
+                            if corners_col != 'CK':
+                                corners_data.rename(columns={corners_col: 'CK'}, inplace=True)
                             break
                 except Exception as e:
                     logger.warning(f"Failed to parse corners data for {team_name}: {e}")
         
         # Merge data
         try:
-            # Get essential shooting columns
-            shooting_cols = ["Date", "Sh", "SoT", "Dist", "FK", "PK", "PKatt"]
-            available_cols = [col for col in shooting_cols if col in shooting.columns]
+            team_data = matches_df.copy()
             
-            team_data = matches.merge(shooting[available_cols], on="Date", how="inner")
+            # Add shooting data if available
+            if shooting is not None and not shooting.empty:
+                # Get essential shooting columns
+                shooting_cols = ["Date", "Sh", "SoT", "Dist", "FK", "PK", "PKatt"]
+                available_cols = [col for col in shooting_cols if col in shooting.columns]
+                
+                if 'Date' in available_cols and len(available_cols) > 1:
+                    # Ensure Date column is properly formatted in both DataFrames
+                    # Convert to strings if not already
+                    if not pd.api.types.is_string_dtype(team_data['Date']):
+                        team_data['Date'] = team_data['Date'].astype(str)
+                    if not pd.api.types.is_string_dtype(shooting['Date']):
+                        shooting['Date'] = shooting['Date'].astype(str)
+                        
+                    team_data = team_data.merge(shooting[available_cols], on="Date", how="left")
             
             # Add corners data if available
             if corners_data is not None and not corners_data.empty:
+                # Ensure Date column is properly formatted
+                if not pd.api.types.is_string_dtype(corners_data['Date']):
+                    corners_data['Date'] = corners_data['Date'].astype(str)
+                if not pd.api.types.is_string_dtype(team_data['Date']):
+                    team_data['Date'] = team_data['Date'].astype(str)
+                    
                 team_data = team_data.merge(corners_data, on="Date", how="left")
             
-            # Filter for Premier League matches only
-            team_data = team_data[team_data["Comp"] == "Premier League"]
+            # Filter for Premier League matches only if 'Comp' column exists
+            if 'Comp' in team_data.columns:
+                team_data = team_data[team_data["Comp"].str.contains("Premier League", case=False, na=False)]
             
             # Add team and season info
             team_data["Season"] = year
             team_data["Team"] = team_name
+            
+            # Calculate points based on result
+            if 'Result' in team_data.columns:
+                result_to_points = {'W': 3, 'D': 1, 'L': 0}
+                team_data['Points'] = team_data['Result'].map(result_to_points)
+            
+            # Add is_home field if venue column exists
+            if 'Venue' in team_data.columns:
+                team_data['is_home'] = team_data['Venue'].str.lower() == 'home'
+            
+            # Generate match_id
+            if 'Date' in team_data.columns and 'Opponent' in team_data.columns:
+                team_data['match_id'] = team_data.apply(
+                    lambda row: f"{row['Date']}_{team_name}_{row['Opponent']}".replace(' ', '_'),
+                    axis=1
+                )
             
             return team_data
             
@@ -417,409 +636,218 @@ class FBrefScraper:
             logger.error(f"Failed to merge data for {team_name}: {e}")
             return None
 
-    def scrape_season(self, url: str, year: int) -> Tuple[List[pd.DataFrame], Optional[str]]:
+    def save_scraping_state(self, processed_teams):
         """
-        Scrape all teams for a specific season
+        Save the current scraping state to a file
         
         Args:
-            url: URL of the season standings page
-            year: Season year
-            
-        Returns:
-            Tuple of (list of team DataFrames, URL for previous season)
+            processed_teams: List of team names that have been processed
         """
-        logger.info(f"Scraping season {year} from {url}")
+        state_file = os.path.join(self.data_dir, "scrape_state.json")
+        state = {
+            "timestamp": datetime.now().isoformat(),
+            "processed_teams": processed_teams,
+            "current_year": self.years[0] if self.years else datetime.now().year
+        }
         
-        # Get standings page HTML
-        html = self.get_html(url)
-        if not html:
-            logger.error(f"Failed to get season page HTML for {year}")
-            return [], None
-        
-        # Extract team URLs
-        team_urls = self.extract_team_urls(html)
-        logger.info(f"Found {len(team_urls)} teams")
-        
-        # Get previous season URL
-        previous_season_url = self.get_previous_season_url(html)
-        
-        # Process each team
-        season_dfs = []
-        for team_url in team_urls:
-            team_df = self.parse_matches_and_stats(team_url, year)
-            if team_df is not None and not team_df.empty:
-                season_dfs.append(team_df)
-            else:
-                logger.warning(f"No valid data found for team at {team_url}")
-        
-        return season_dfs, previous_season_url
+        try:
+            with open(state_file, 'w') as f:
+                json.dump(state, f)
+            
+            logger.info(f"Saved scraping state with {len(processed_teams)} processed teams")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to save scraping state: {e}")
+            return False
 
-    def scrape(self) -> pd.DataFrame:
+    def load_scraping_state(self):
         """
-        Main method to scrape data for all configured years
+        Load the previous scraping state if available
         
         Returns:
-            Combined DataFrame with all matches
+            List of team names that have been processed
         """
-        standings_url = self.base_url
-        season_dfs = []
+        state_file = os.path.join(self.data_dir, "scrape_state.json")
         
-        for year in self.years:
-            year_dfs, next_url = self.scrape_season(standings_url, year)
-            season_dfs.extend(year_dfs)
-            
-            if next_url:
-                standings_url = next_url
-            else:
-                logger.warning(f"Could not find previous season URL after {year}")
-                break
+        if os.path.exists(state_file):
+            try:
+                with open(state_file, 'r') as f:
+                    state = json.load(f)
+                
+                processed_teams = state.get("processed_teams", [])
+                logger.info(f"Loaded previous state with {len(processed_teams)} processed teams")
+                
+                # Update the year if stored in state
+                if "current_year" in state and self.years:
+                    self.years[0] = state["current_year"]
+                
+                return processed_teams
+            except Exception as e:
+                logger.warning(f"Failed to load scraping state: {e}")
         
-        if not season_dfs:
-            logger.error("No data collected")
+        return []
+
+    def combine_intermediate_results(self):
+        """
+        Combine all intermediate batch results into a single DataFrame
+        
+        Returns:
+            Combined DataFrame from all intermediate files
+        """
+        intermediate_files = [f for f in os.listdir(self.data_dir) 
+                             if f.startswith("temp_batch_") and f.endswith(".csv")]
+        
+        if not intermediate_files:
+            logger.warning("No intermediate batch files found")
             return pd.DataFrame()
         
-        # Combine all data
-        combined_df = pd.concat(season_dfs, ignore_index=True)
+        all_dfs = []
+        for file in intermediate_files:
+            try:
+                filepath = os.path.join(self.data_dir, file)
+                df = pd.read_csv(filepath)
+                all_dfs.append(df)
+            except Exception as e:
+                logger.error(f"Failed to read intermediate file {file}: {e}")
         
-        # Standardize column names to lowercase
-        combined_df.columns = [c.lower() for c in combined_df.columns]
+        if not all_dfs:
+            return pd.DataFrame()
+        
+        combined_df = pd.concat(all_dfs, ignore_index=True)
+        
+        # Remove duplicates
+        if 'match_id' in combined_df.columns:
+            combined_df.drop_duplicates(subset=['match_id'], inplace=True)
+        else:
+            # Create a temp ID based on available columns for deduplication
+            id_cols = []
+            for col in ['date', 'team', 'opponent']:
+                if col in combined_df.columns:
+                    id_cols.append(col)
+            
+            if id_cols:
+                combined_df.drop_duplicates(subset=id_cols, inplace=True)
         
         return combined_df
     
-    def get_recent_matches(self, limit=7) -> pd.DataFrame:
-        """
-        Extract only the most recent matches from the scraped data
-        
-        Args:
-            limit: Number of recent matches to retrieve per team
-        
-        Returns:
-            DataFrame with only recent matches
-        """
-        # Get all matches
-        all_matches = self.scrape()
-        
-        if all_matches.empty:
-            logger.warning("No matches found to extract recent matches from")
-            return pd.DataFrame()
-        
-        # Convert date to datetime for sorting
-        all_matches['date'] = pd.to_datetime(all_matches['date'])
-        
-        # Create empty dataframe for recent matches
-        recent_matches = pd.DataFrame()
-        
-        # For each team, get their most recent matches
-        for team in all_matches['team'].unique():
-            team_matches = all_matches[all_matches['team'] == team]
-            team_recent = team_matches.sort_values('date', ascending=False).head(limit)
-            recent_matches = pd.concat([recent_matches, team_recent])
-        
-        # Add scrape date
-        recent_matches['scrape_date'] = datetime.now().strftime("%Y-%m-%d")
-        
-        # Generate match_id (unique identifier)
-        recent_matches['match_id'] = recent_matches.apply(
-            lambda row: f"{row['date'].strftime('%Y-%m-%d')}_{row['team']}_{row['opponent']}",
-            axis=1
-        )
-        
-        # Add is_home field
-        recent_matches['is_home'] = recent_matches['venue'].str.lower() == 'home'
-        
-        # Add points based on result
-        result_to_points = {'W': 3, 'D': 1, 'L': 0}
-        recent_matches['points'] = recent_matches['result'].map(result_to_points)
-        
-        # Process corners data if available
-        if 'ck' in recent_matches.columns:
-            # For home matches, CK is corners for
-            recent_matches.loc[recent_matches['is_home'], 'corners_for'] = recent_matches.loc[recent_matches['is_home'], 'ck']
-            # We don't have corners against directly, would need opponent's data
-            
-        return recent_matches
-
-    def save_data(self, df: pd.DataFrame, filename: str = None) -> str:
-        """
-        Save the scraped data to CSV
-        
-        Args:
-            df: DataFrame to save
-            filename: Optional filename, will use timestamp if not provided
-            
-        Returns:
-            Path to the saved file
-        """
-        if df.empty:
-            logger.error("Cannot save empty DataFrame")
-            return ""
-        
-        if not filename:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"fbref_matches_{timestamp}.csv"
-        
-        filepath = os.path.join(self.data_dir, filename)
-        df.to_csv(filepath, index=False)
-        logger.info(f"Data saved to {filepath}")
-        
-        return filepath
-
-    def scrape_in_batches(self, batch_size=5, batch_delay=300):
+    def scrape_in_batches(self, batch_size=3, batch_delay=600):
         """
         Scrape teams in batches with delays between batches to avoid rate limiting
         
         Args:
-            batch_size: Number of teams to scrape in each batch
-            batch_delay: Delay in seconds between batches
+            batch_size: Number of teams to scrape in each batch (reduced to 3)
+            batch_delay: Delay in seconds between batches (increased to 10 minutes)
             
         Returns:
             Combined DataFrame with all matches
         """
         logger.info(f"Starting batch scraping with {batch_size} teams per batch")
         
+        # Load previous state
+        self.processed_teams = self.load_scraping_state()
+        
         # Get all team URLs first
         html = self.get_html(self.base_url)
         if not html:
             logger.error("Failed to get league page HTML")
-            return pd.DataFrame()
+            
+            # Try to recover from intermediate results
+            logger.info("Attempting to recover from intermediate results...")
+            return self.combine_intermediate_results()
         
         team_urls = self.extract_team_urls(html)
         if not team_urls:
             logger.error("No team URLs found")
-            return pd.DataFrame()
+            return self.combine_intermediate_results()
         
-        logger.info(f"Found {len(team_urls)} teams, will scrape in batches of {batch_size}")
+        # Filter out already processed teams
+        filtered_team_urls = []
+        for url in team_urls:
+            team_name = self.extract_team_name(url)
+            if team_name not in self.processed_teams:
+                filtered_team_urls.append(url)
+            else:
+                logger.info(f"Skipping already processed team: {team_name}")
+        
+        if not filtered_team_urls and self.processed_teams:
+            logger.info("All teams already processed, combining existing results")
+            return self.combine_intermediate_results()
+            
+        logger.info(f"Found {len(filtered_team_urls)} teams to scrape (out of {len(team_urls)} total)")
         
         # Split into batches
-        batches = [team_urls[i:i+batch_size] for i in range(0, len(team_urls), batch_size)]
+        batches = [filtered_team_urls[i:i+batch_size] for i in range(0, len(filtered_team_urls), batch_size)]
         all_team_dfs = []
         
         for batch_num, batch_urls in enumerate(batches, 1):
             logger.info(f"Processing batch {batch_num}/{len(batches)} with {len(batch_urls)} teams")
+            batch_dfs = []
             
             # Process this batch
             for team_url in batch_urls:
                 team_name = self.extract_team_name(team_url)
                 logger.info(f"Scraping {team_name}")
                 
-                team_df = self.parse_matches_and_stats(team_url, self.years[0])
-                if team_df is not None and not team_df.empty:
-                    all_team_dfs.append(team_df)
-                else:
-                    logger.warning(f"No valid data found for {team_name}")
+                try:
+                    team_df = self.parse_matches_and_stats(team_url, self.years[0])
+                    if team_df is not None and not team_df.empty:
+                        all_team_dfs.append(team_df)
+                        batch_dfs.append(team_df)
+                        # Mark as processed
+                        self.processed_teams.append(team_name)
+                        self.save_scraping_state(self.processed_teams)
+                    else:
+                        logger.warning(f"No valid data found for {team_name}")
+                except Exception as e:
+                    logger.error(f"Error processing {team_name}: {e}")
+                    # Save current progress before continuing
+                    self.save_scraping_state(self.processed_teams)
+                
+                # Add delay between teams within batch (30-60 seconds)
+                team_delay = random.uniform(30, 60)
+                logger.info(f"Waiting {team_delay:.1f} seconds before next team...")
+                time.sleep(team_delay)
+            
+            # Save intermediate results after each batch
+            if batch_dfs:
+                temp_df = pd.concat(batch_dfs, ignore_index=True)
+                temp_df.columns = [c.lower() for c in temp_df.columns]
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                temp_filepath = os.path.join(self.data_dir, f"temp_batch_{batch_num}_{timestamp}.csv")
+                temp_df.to_csv(temp_filepath, index=False)
+                logger.info(f"Saved intermediate results for batch {batch_num} to {temp_filepath}")
             
             # Delay before next batch if not the last batch
             if batch_num < len(batches):
-                delay = batch_delay + random.uniform(-30, 30)  # Add some randomness
-                logger.info(f"Batch {batch_num} complete. Waiting {delay:.1f} seconds before next batch...")
-                time.sleep(delay)
+                actual_delay = batch_delay + random.uniform(-60, 60)  # Add some randomness (±1 minute)
+                logger.info(f"Batch {batch_num} complete. Waiting {actual_delay:.1f} seconds before next batch...")
+                time.sleep(actual_delay)
         
-        if not all_team_dfs:
-            logger.error("No data collected from any team")
-            return pd.DataFrame()
-        
-        # Combine all data
-        combined_df = pd.concat(all_team_dfs, ignore_index=True)
-        combined_df.columns = [c.lower() for c in combined_df.columns]
-        
-        return combined_df
-
-
-class FBrefDatabaseManager:
-    """Class to manage PostgreSQL operations for FBref data"""
-    
-    def __init__(self, db_name="fbref", user="postgres", 
-                 password="password", host="localhost", port="5432",
-                 connection_uri=None):
-        """Initialize the database manager"""
-        if connection_uri:
-            self.connection_uri = connection_uri
-            # Extract components for psycopg2 connection
-            # Format: postgresql+psycopg2://user:password@host:port/dbname
-            uri_parts = connection_uri.replace('postgresql+psycopg2://', '').split('@')
-            user_pass = uri_parts[0].split(':')
-            host_port_db = uri_parts[1].split('/')
-            host_port = host_port_db[0].split(':')
+        # Combine with previously processed results
+        if all_team_dfs:
+            new_df = pd.concat(all_team_dfs, ignore_index=True)
+            new_df.columns = [c.lower() for c in new_df.columns]
             
-            self.connection_params = {
-                "dbname": host_port_db[1],
-                "user": user_pass[0],
-                "password": user_pass[1],
-                "host": host_port[0],
-                "port": host_port[1] if len(host_port) > 1 else "5432"
-            }
-        else:
-            self.connection_params = {
-                "dbname": db_name,
-                "user": user,
-                "password": password,
-                "host": host,
-                "port": port
-            }
-            self.connection_uri = f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{db_name}"
-        
-    def get_connection(self):
-        """Get a database connection with context manager"""
-        return psycopg2.connect(**self.connection_params)
-        
-    def initialize_db(self):
-        """Create database tables if they don't exist"""
-        # SQL to create the recent_matches table
-        create_table_sql = """
-        CREATE TABLE IF NOT EXISTS recent_matches (
-            match_id VARCHAR(100) PRIMARY KEY,
-            date DATE NOT NULL,
-            team VARCHAR(50) NOT NULL,
-            opponent VARCHAR(50) NOT NULL,
-            venue VARCHAR(20),
-            result CHAR(1),
-            gf INTEGER,
-            ga INTEGER,
-            points INTEGER,
-            sh INTEGER,
-            sot INTEGER,
-            dist FLOAT,
-            fk FLOAT,
-            pk INTEGER,
-            pkatt INTEGER,
-            possession FLOAT,
-            corners_for INTEGER,
-            corners_against INTEGER,
-            xg FLOAT,
-            xga FLOAT,
-            comp VARCHAR(50),
-            round VARCHAR(50),
-            season INTEGER,
-            is_home BOOLEAN,
-            scrape_date TIMESTAMP
-        );
-        
-        -- Create indexes for faster queries
-        CREATE INDEX IF NOT EXISTS idx_recent_matches_date ON recent_matches(date);
-        CREATE INDEX IF NOT EXISTS idx_recent_matches_team ON recent_matches(team);
-        CREATE INDEX IF NOT EXISTS idx_recent_matches_season ON recent_matches(season);
-        
-        -- Teams Table for team information
-        CREATE TABLE IF NOT EXISTS teams (
-            team_id SERIAL PRIMARY KEY,
-            team_name VARCHAR(50) UNIQUE NOT NULL,
-            country VARCHAR(50),
-            league VARCHAR(50),
-            logo_url VARCHAR(255),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        
-        -- Players Table for player information
-        CREATE TABLE IF NOT EXISTS players (
-            player_id SERIAL PRIMARY KEY,
-            player_name VARCHAR(100) NOT NULL,
-            team_id INTEGER REFERENCES teams(team_id),
-            position VARCHAR(20),
-            nationality VARCHAR(50),
-            birth_date DATE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE (player_name, team_id)
-        );
-        
-        -- League Table for storing standings
-        CREATE TABLE IF NOT EXISTS league_table (
-            id SERIAL PRIMARY KEY,
-            team_id INTEGER REFERENCES teams(team_id),
-            season INTEGER NOT NULL,
-            rank INTEGER,
-            matches_played INTEGER,
-            wins INTEGER,
-            draws INTEGER,
-            losses INTEGER,
-            goals_for INTEGER,
-            goals_against INTEGER,
-            goal_diff INTEGER,
-            points INTEGER,
-            points_per_match FLOAT,
-            xg FLOAT,
-            xga FLOAT,
-            xg_diff FLOAT,
-            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE (team_id, season)
-        );
-        """
-        
-        with self.get_connection() as conn:
-            with conn.cursor() as cursor:
-                # Create table and indexes
-                cursor.execute(create_table_sql)
+            # Combine with any intermediate results from previous runs
+            prev_df = self.combine_intermediate_results()
+            if not prev_df.empty:
+                logger.info("Combining with previous intermediate results")
+                full_df = pd.concat([new_df, prev_df], ignore_index=True)
                 
-                # Commit changes happens automatically with context manager
-                logger.info("Database initialized successfully")
-    
-    def store_recent_matches(self, df):
-        """Store recent matches with upsert logic"""
-        if df.empty:
-            logger.warning("No matches to store")
-            return 0
-        
-        # Prepare the upsert query
-        upsert_query = """
-        INSERT INTO recent_matches (
-            match_id, date, team, opponent, venue, result, 
-            gf, ga, points, sh, sot, dist, fk, pk, pkatt,
-            corners_for, comp, round, season, is_home, scrape_date
-        ) VALUES %s
-        ON CONFLICT (match_id) 
-        DO UPDATE SET
-            result = EXCLUDED.result,
-            gf = EXCLUDED.gf,
-            ga = EXCLUDED.ga,
-            points = EXCLUDED.points,
-            sh = EXCLUDED.sh,
-            sot = EXCLUDED.sot,
-            dist = EXCLUDED.dist,
-            fk = EXCLUDED.fk,
-            pk = EXCLUDED.pk,
-            pkatt = EXCLUDED.pkatt,
-            corners_for = EXCLUDED.corners_for,
-            scrape_date;
-        """
-        
-        # Prepare data for insertion
-        columns = ['match_id', 'date', 'team', 'opponent', 'venue', 'result', 
-                  'gf', 'ga', 'points', 'sh', 'sot', 'dist', 'fk', 'pk', 'pkatt',
-                  'corners_for', 'comp', 'round', 'season', 'is_home', 'scrape_date']
-        
-        # Ensure all required columns exist
-        for col in columns:
-            if col not in df.columns and col not in ['is_home', 'scrape_date', 'corners_for']:
-                logger.error(f"Required column '{col}' missing from DataFrame")
-                return 0
-        
-        # Convert values to list of tuples for execute_values
-        values = []
-        for _, row in df.iterrows():
-            value = []
-            for col in columns:
-                if col in df.columns:
-                    value.append(row[col])
-                elif col == 'is_home':
-                    value.append(row['venue'].lower() == 'home')
-                elif col == 'scrape_date':
-                    value.append(datetime.now())
-                elif col == 'corners_for':
-                    # Handle corners data if available
-                    if 'ck' in df.columns and not pd.isna(row.get('ck')):
-                        value.append(int(row['ck']))
-                    else:
-                        value.append(None)
-                else:
-                    value.append(None)
-            values.append(tuple(value))
-        
-        with self.get_connection() as conn:
-            with conn.cursor() as cursor:
-                # Execute upsert
-                execute_values(cursor, upsert_query, values)
-                # Commit happens automatically with context manager
+                # Remove duplicates
+                if 'match_id' in full_df.columns:
+                    full_df.drop_duplicates(subset=['match_id'], inplace=True)
+                elif all(col in full_df.columns for col in ['date', 'team', 'opponent']):
+                    full_df.drop_duplicates(subset=['date', 'team', 'opponent'], inplace=True)
                 
-                logger.info(f"Stored/updated {len(df)} matches in the database")
-                return len(df)
+                return full_df
+            return new_df
+        
+        # If no new data collected, return any existing intermediate results
+        intermediate_df = self.combine_intermediate_results()
+        if not intermediate_df.empty:
+            logger.info("No new data collected, returning existing intermediate results")
+            return intermediate_df
+            
+        logger.error("No data collected from any team")
+        return pd.DataFrame()
