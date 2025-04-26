@@ -20,12 +20,21 @@ DB_URI = os.getenv('PG_URI', f"postgresql+psycopg2://{DB_CONFIG['user']}:{DB_CON
 SCRAPER_CONFIG = {
     'base_url': 'https://fbref.com/en/comps/9/Premier-League-Stats',
     'matches_to_keep': 7,
-    'sleep_time_range': (1, 3),  # Random delay between 1-3 seconds
-    'data_dir': 'data'
+    'sleep_time_range': (10, 20),  # Increased delay between requests (10-20 seconds)
+    'data_dir': 'data',
+    'max_cache_age': 48,  # Cache HTML files for 48 hours
+    'max_retries': 3,     # Maximum retry attempts on rate limit
+    'use_batch_mode': os.getenv('USE_BATCH_MODE', 'False').lower() == 'true',
+    'batch_size': 3,      # Number of teams to scrape in each batch
+    'batch_delay': 300    # Delay between batches in seconds
 }
 
 # Logging configuration
 LOG_CONFIG = {
     'log_file': 'logs/fbref_scraper.log',
-    'log_level': 'INFO'
+    'log_level': 'INFO',
+    'log_format': '%(asctime)s - %(levelname)s - %(message)s',
+    'rotate_logs': True,
+    'max_log_size_mb': 10,
+    'backup_count': 5
 }

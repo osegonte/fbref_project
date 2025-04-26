@@ -12,6 +12,8 @@ from psycopg2.extras import execute_values
 import io
 import hashlib
 from dotenv import load_dotenv
+from rate_limit_handler import RateLimitHandler
+from proxy_helper import ProxyManager
 
 # Load environment variables
 load_dotenv()
@@ -39,7 +41,11 @@ USER_AGENTS = [
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:90.0) Gecko/20100101 Firefox/90.0',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:90.0) Gecko/20100101 Firefox/90.0',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 Edg/91.0.864.59'
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 Edg/91.0.864.59',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
+    'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:95.0) Gecko/20100101 Firefox/95.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.93 Safari/537.36 OPR/82.0.4227.33'
 ]
 
 class FBrefScraper:
@@ -47,10 +53,10 @@ class FBrefScraper:
     
     def __init__(self, base_url: str = "https://fbref.com/en/comps/9/Premier-League-Stats", 
                  years: List[int] = None, 
-                 min_delay: int = 5, 
-                 max_delay: int = 10,
+                 min_delay: int = 10, 
+                 max_delay: int = 20,
                  cache_dir: str = "data/cache",
-                 max_cache_age: int = 24):
+                 max_cache_age: int = 48):
         """
         Initialize the scraper with base URL and years to scrape
         
@@ -72,6 +78,15 @@ class FBrefScraper:
         self.max_delay = max_delay
         self.max_cache_age = max_cache_age
         
+        # Create a session for persistent connections
+        self.session = requests.Session()
+        
+        # Initialize the rate limit handler
+        self.rate_handler = RateLimitHandler(min_delay=min_delay, max_delay=max_delay)
+        
+        # Initialize the proxy manager
+        self.proxy_manager = ProxyManager()
+        
         # Create required directories
         os.makedirs(self.data_dir, exist_ok=True)
         os.makedirs(self.cache_dir, exist_ok=True)
@@ -84,7 +99,9 @@ class FBrefScraper:
             'Accept-Language': 'en-US,en;q=0.5',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
-            'Cache-Control': 'max-age=0'
+            'Cache-Control': 'max-age=0',
+            'Referer': 'https://fbref.com/',
+            'DNT': '1'
         }
     
     def get_cached_html(self, url: str) -> Optional[str]:
@@ -153,27 +170,30 @@ class FBrefScraper:
         
         # Not cached or expired, fetch it
         retry_count = 0
-        base_delay = self.min_delay
         
         while retry_count <= max_retries:
             try:
-                # Random delay between requests
-                current_delay = base_delay + random.random() * (self.max_delay - self.min_delay)
-                logger.debug(f"Waiting {current_delay:.2f} seconds before fetching {url}")
-                time.sleep(current_delay)
+                # Wait before request (handled by rate_handler)
+                self.rate_handler.wait_before_request()
                 
                 # Get with random headers
                 headers = self.get_random_headers()
-                response = requests.get(url, headers=headers, timeout=15)
+                
+                # Get proxy if available
+                proxies = self.proxy_manager.get_proxy()
+                
+                # Make the request
+                response = self.session.get(url, headers=headers, proxies=proxies, timeout=20)
                 
                 # If rate limited, back off and retry
                 if response.status_code == 429:
                     retry_count += 1
-                    base_delay *= 2  # Exponential backoff
                     
-                    if retry_count <= max_retries:
-                        logger.warning(f"Rate limited, retrying in {base_delay:.2f} seconds (attempt {retry_count}/{max_retries})")
-                        time.sleep(base_delay)
+                    # Handle rate limit with rate_handler
+                    should_retry, backoff_time = self.rate_handler.handle_rate_limit(retry_count, max_retries)
+                    
+                    if should_retry:
+                        time.sleep(backoff_time)
                         continue
                     else:
                         logger.error(f"Maximum retries reached for {url}")
@@ -181,6 +201,9 @@ class FBrefScraper:
                 
                 # For other errors, fail fast
                 response.raise_for_status()
+                
+                # Reset rate limit counter on success
+                self.rate_handler.reset_after_success()
                 
                 # Cache successful response
                 self.save_to_cache(url, response.text)
@@ -190,10 +213,10 @@ class FBrefScraper:
                 logger.error(f"Failed to fetch {url}: {e}")
                 retry_count += 1
                 
-                if retry_count <= max_retries and isinstance(e, requests.exceptions.ConnectionError):
-                    logger.info(f"Connection error, retrying in {base_delay} seconds ({retry_count}/{max_retries})")
-                    time.sleep(base_delay)
-                    base_delay *= 2
+                if retry_count <= max_retries and isinstance(e, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
+                    backoff_time = self.min_delay * (2 ** retry_count)
+                    logger.info(f"Connection error or timeout, retrying in {backoff_time} seconds ({retry_count}/{max_retries})")
+                    time.sleep(backoff_time)
                 else:
                     return None
         
@@ -270,16 +293,36 @@ class FBrefScraper:
             
         return f"https://fbref.com{links[0]}"
 
-    def parse_matches_and_shooting(self, team_url: str, year: int) -> Optional[pd.DataFrame]:
+    def get_standard_stats_link(self, html: str) -> Optional[str]:
         """
-        Parse matches and shooting data for a team
+        Extract standard stats link from team page (for corners data)
+        
+        Args:
+            html: HTML content of the team page
+            
+        Returns:
+            URL for the standard stats or None if not found
+        """
+        soup = BeautifulSoup(html, 'html.parser')
+        links = [l.get("href") for l in soup.find_all('a')]
+        links = [l for l in links if l and 'all_comps/stats/' in l]
+        
+        if not links:
+            logger.warning("No standard stats link found")
+            return None
+            
+        return f"https://fbref.com{links[0]}"
+
+    def parse_matches_and_stats(self, team_url: str, year: int) -> Optional[pd.DataFrame]:
+        """
+        Parse matches, shooting data, and corners data for a team
         
         Args:
             team_url: URL of the team page
             year: Season year
             
         Returns:
-            DataFrame with combined match and shooting data or None if failed
+            DataFrame with combined match and stats data or None if failed
         """
         team_name = self.extract_team_name(team_url)
         logger.info(f"Scraping {team_name} for {year} season")
@@ -321,7 +364,34 @@ class FBrefScraper:
         except Exception as e:
             logger.error(f"Failed to parse shooting stats for {team_name}: {e}")
             return None
-            
+        
+        # Get standard stats for corners
+        standard_stats_link = self.get_standard_stats_link(team_html)
+        corners_data = None
+        
+        if standard_stats_link:
+            standard_stats_html = self.get_html(standard_stats_link)
+            if standard_stats_html:
+                try:
+                    html_io = io.StringIO(standard_stats_html)
+                    stats_tables = pd.read_html(html_io)
+                    
+                    # Find the table with corners data
+                    for stats_table in stats_tables:
+                        if isinstance(stats_table.columns, pd.MultiIndex):
+                            stats_table.columns = stats_table.columns.droplevel(0)
+                        
+                        # Look for corner kicks columns (CK or similar)
+                        if 'CK' in stats_table.columns:
+                            corners_data = stats_table[['Date', 'CK']]
+                            break
+                        elif 'Corners' in stats_table.columns:
+                            corners_data = stats_table[['Date', 'Corners']]
+                            corners_data.rename(columns={'Corners': 'CK'}, inplace=True)
+                            break
+                except Exception as e:
+                    logger.warning(f"Failed to parse corners data for {team_name}: {e}")
+        
         # Merge data
         try:
             # Get essential shooting columns
@@ -329,6 +399,10 @@ class FBrefScraper:
             available_cols = [col for col in shooting_cols if col in shooting.columns]
             
             team_data = matches.merge(shooting[available_cols], on="Date", how="inner")
+            
+            # Add corners data if available
+            if corners_data is not None and not corners_data.empty:
+                team_data = team_data.merge(corners_data, on="Date", how="left")
             
             # Filter for Premier League matches only
             team_data = team_data[team_data["Comp"] == "Premier League"]
@@ -372,7 +446,7 @@ class FBrefScraper:
         # Process each team
         season_dfs = []
         for team_url in team_urls:
-            team_df = self.parse_matches_and_shooting(team_url, year)
+            team_df = self.parse_matches_and_stats(team_url, year)
             if team_df is not None and not team_df.empty:
                 season_dfs.append(team_df)
             else:
@@ -457,6 +531,12 @@ class FBrefScraper:
         result_to_points = {'W': 3, 'D': 1, 'L': 0}
         recent_matches['points'] = recent_matches['result'].map(result_to_points)
         
+        # Process corners data if available
+        if 'ck' in recent_matches.columns:
+            # For home matches, CK is corners for
+            recent_matches.loc[recent_matches['is_home'], 'corners_for'] = recent_matches.loc[recent_matches['is_home'], 'ck']
+            # We don't have corners against directly, would need opponent's data
+            
         return recent_matches
 
     def save_data(self, df: pd.DataFrame, filename: str = None) -> str:
@@ -483,6 +563,66 @@ class FBrefScraper:
         logger.info(f"Data saved to {filepath}")
         
         return filepath
+
+    def scrape_in_batches(self, batch_size=5, batch_delay=300):
+        """
+        Scrape teams in batches with delays between batches to avoid rate limiting
+        
+        Args:
+            batch_size: Number of teams to scrape in each batch
+            batch_delay: Delay in seconds between batches
+            
+        Returns:
+            Combined DataFrame with all matches
+        """
+        logger.info(f"Starting batch scraping with {batch_size} teams per batch")
+        
+        # Get all team URLs first
+        html = self.get_html(self.base_url)
+        if not html:
+            logger.error("Failed to get league page HTML")
+            return pd.DataFrame()
+        
+        team_urls = self.extract_team_urls(html)
+        if not team_urls:
+            logger.error("No team URLs found")
+            return pd.DataFrame()
+        
+        logger.info(f"Found {len(team_urls)} teams, will scrape in batches of {batch_size}")
+        
+        # Split into batches
+        batches = [team_urls[i:i+batch_size] for i in range(0, len(team_urls), batch_size)]
+        all_team_dfs = []
+        
+        for batch_num, batch_urls in enumerate(batches, 1):
+            logger.info(f"Processing batch {batch_num}/{len(batches)} with {len(batch_urls)} teams")
+            
+            # Process this batch
+            for team_url in batch_urls:
+                team_name = self.extract_team_name(team_url)
+                logger.info(f"Scraping {team_name}")
+                
+                team_df = self.parse_matches_and_stats(team_url, self.years[0])
+                if team_df is not None and not team_df.empty:
+                    all_team_dfs.append(team_df)
+                else:
+                    logger.warning(f"No valid data found for {team_name}")
+            
+            # Delay before next batch if not the last batch
+            if batch_num < len(batches):
+                delay = batch_delay + random.uniform(-30, 30)  # Add some randomness
+                logger.info(f"Batch {batch_num} complete. Waiting {delay:.1f} seconds before next batch...")
+                time.sleep(delay)
+        
+        if not all_team_dfs:
+            logger.error("No data collected from any team")
+            return pd.DataFrame()
+        
+        # Combine all data
+        combined_df = pd.concat(all_team_dfs, ignore_index=True)
+        combined_df.columns = [c.lower() for c in combined_df.columns]
+        
+        return combined_df
 
 
 class FBrefDatabaseManager:
@@ -625,7 +765,7 @@ class FBrefDatabaseManager:
         INSERT INTO recent_matches (
             match_id, date, team, opponent, venue, result, 
             gf, ga, points, sh, sot, dist, fk, pk, pkatt,
-            comp, round, season, is_home, scrape_date
+            corners_for, comp, round, season, is_home, scrape_date
         ) VALUES %s
         ON CONFLICT (match_id) 
         DO UPDATE SET
@@ -639,17 +779,18 @@ class FBrefDatabaseManager:
             fk = EXCLUDED.fk,
             pk = EXCLUDED.pk,
             pkatt = EXCLUDED.pkatt,
-            scrape_date = EXCLUDED.scrape_date;
+            corners_for = EXCLUDED.corners_for,
+            scrape_date;
         """
         
         # Prepare data for insertion
         columns = ['match_id', 'date', 'team', 'opponent', 'venue', 'result', 
                   'gf', 'ga', 'points', 'sh', 'sot', 'dist', 'fk', 'pk', 'pkatt',
-                  'comp', 'round', 'season', 'is_home', 'scrape_date']
+                  'corners_for', 'comp', 'round', 'season', 'is_home', 'scrape_date']
         
         # Ensure all required columns exist
         for col in columns:
-            if col not in df.columns and col not in ['is_home', 'scrape_date']:
+            if col not in df.columns and col not in ['is_home', 'scrape_date', 'corners_for']:
                 logger.error(f"Required column '{col}' missing from DataFrame")
                 return 0
         
@@ -664,6 +805,12 @@ class FBrefDatabaseManager:
                     value.append(row['venue'].lower() == 'home')
                 elif col == 'scrape_date':
                     value.append(datetime.now())
+                elif col == 'corners_for':
+                    # Handle corners data if available
+                    if 'ck' in df.columns and not pd.isna(row.get('ck')):
+                        value.append(int(row['ck']))
+                    else:
+                        value.append(None)
                 else:
                     value.append(None)
             values.append(tuple(value))
@@ -676,176 +823,3 @@ class FBrefDatabaseManager:
                 
                 logger.info(f"Stored/updated {len(df)} matches in the database")
                 return len(df)
-    
-    def get_recent_team_matches(self, team, limit=7):
-        """Get recent matches for a specific team"""
-        query = """
-        SELECT * FROM recent_matches
-        WHERE team = %s
-        ORDER BY date DESC
-        LIMIT %s
-        """
-        
-        with self.get_connection() as conn:
-            # Using SQLAlchemy's connection for pandas
-            from sqlalchemy import create_engine
-            engine = create_engine(self.connection_uri)
-            df = pd.read_sql_query(query, engine, params=(team, limit))
-            
-            logger.info(f"Retrieved {len(df)} recent matches for {team}")
-            return df
-    
-    def get_all_recent_matches(self, days=30):
-        """Get all matches in the last N days"""
-        # Calculate cutoff date
-        cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-        
-        query = """
-        SELECT * FROM recent_matches
-        WHERE date >= %s
-        ORDER BY date DESC
-        """
-        
-        with self.get_connection() as conn:
-            # Using SQLAlchemy's connection for pandas
-            from sqlalchemy import create_engine
-            engine = create_engine(self.connection_uri)
-            df = pd.read_sql_query(query, engine, params=(cutoff_date,))
-            
-            logger.info(f"Retrieved {len(df)} matches from the last {days} days")
-            return df
-    
-    def execute_query(self, query, params=None):
-        """Execute a custom SQL query"""
-        try:
-            # Using SQLAlchemy's connection for pandas
-            from sqlalchemy import create_engine
-            engine = create_engine(self.connection_uri)
-            
-            # Query data and load into DataFrame
-            if params:
-                df = pd.read_sql_query(query, engine, params=params)
-            else:
-                df = pd.read_sql_query(query, engine)
-            
-            return df
-            
-        except Exception as error:
-            logger.error(f"Error executing query: {error}")
-            return pd.DataFrame()
-
-
-def main():
-    """Main function to run the scraper and store data in PostgreSQL"""
-    # Import config if it exists, otherwise use environment variables
-    try:
-        from config import DB_CONFIG, SCRAPER_CONFIG, DB_URI
-        # Use values from config
-        db_uri = DB_URI
-        db_name = DB_CONFIG['db_name']
-        db_user = DB_CONFIG['user']
-        db_password = DB_CONFIG['password']
-        db_host = DB_CONFIG['host']
-        db_port = DB_CONFIG['port']
-        base_url = SCRAPER_CONFIG['base_url']
-        matches_to_keep = SCRAPER_CONFIG['matches_to_keep']
-        min_delay = SCRAPER_CONFIG.get('sleep_time_range', (5, 10))[0]
-        max_delay = SCRAPER_CONFIG.get('sleep_time_range', (5, 10))[1]
-    except (ImportError, KeyError):
-        # Fallback to environment variables
-        db_uri = os.getenv('PG_URI')
-        db_name = os.getenv('PG_DB_NAME', 'fbref')
-        db_user = os.getenv('PG_USER', 'postgres')
-        db_password = os.getenv('PG_PASSWORD', 'password')
-        db_host = os.getenv('PG_HOST', 'localhost')
-        db_port = os.getenv('PG_PORT', '5432')
-        base_url = "https://fbref.com/en/comps/9/Premier-League-Stats"
-        matches_to_keep = 7
-        min_delay = 5
-        max_delay = 10
-    
-    # Define the year(s) to scrape (current season)
-    current_year = datetime.now().year
-    
-    # Initialize the scraper
-    logger.info(f"Initializing scraper with base URL: {base_url}")
-    scraper = FBrefScraper(
-        base_url=base_url, 
-        years=[current_year],
-        min_delay=min_delay,
-        max_delay=max_delay
-    )
-    
-    # Initialize database manager
-    if db_uri:
-        logger.info(f"Connecting to database using URI")
-        db_manager = FBrefDatabaseManager(connection_uri=db_uri)
-    else:
-        logger.info(f"Connecting to database: {db_name} on {db_host}")
-        db_manager = FBrefDatabaseManager(
-            db_name=db_name,
-            user=db_user,
-            password=db_password,
-            host=db_host,
-            port=db_port
-        )
-    
-    # Initialize database (create tables if needed)
-    db_manager.initialize_db()
-    
-    # Scrape only recent matches
-    logger.info("Starting to scrape recent matches...")
-    recent_matches = scraper.get_recent_matches(limit=matches_to_keep)
-    
-    if not recent_matches.empty:
-        # Save to CSV for backup
-        csv_path = scraper.save_data(recent_matches, "recent_matches.csv")
-        logger.info(f"Saved backup to {csv_path}")
-        
-        # Store in PostgreSQL
-        stored_count = db_manager.store_recent_matches(recent_matches)
-        print(f"\nStored {stored_count} recent matches in the database.")
-        
-        # Example: pull back data for the first team scraped
-        if len(recent_matches['team'].unique()) > 0:
-            team_name = recent_matches['team'].unique()[0]
-            team_matches = db_manager.get_recent_team_matches(team_name)
-            print(f"\n{team_name}'s recent matches:")
-            if not team_matches.empty:
-                print(team_matches[['date','opponent','result','gf','ga']].to_string(index=False))
-        
-        # Show top teams by form (last 5 matches)
-        print("\nTeam Form (last 5 matches):")
-        form_query = """
-        WITH recent_form AS (
-            SELECT 
-                team,
-                date,
-                result,
-                points,
-                ROW_NUMBER() OVER (PARTITION BY team ORDER BY date DESC) as match_num
-            FROM recent_matches
-        )
-        SELECT 
-            team,
-            SUM(points) as points,
-            string_agg(result, '' ORDER BY date DESC) as form
-        FROM recent_form
-        WHERE match_num <= 5
-        GROUP BY team
-        ORDER BY points DESC
-        LIMIT 10;
-        """
-        form_table = db_manager.execute_query(form_query)
-        if not form_table.empty:
-            print(form_table.to_string(index=False))
-    else:
-        logger.error("No recent matches found—nothing to store.")
-        print("No matches were found. Check the logs for more details.")
-
-
-if __name__ == "__main__":
-    print("Starting FBref scraper...")
-    main()
-    print("Completed scraping.")
-    # The duplicate main() call has been removed
