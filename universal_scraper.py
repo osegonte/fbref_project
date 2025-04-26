@@ -137,7 +137,7 @@ class LeagueManager:
         "EPL":        {"id": "9",  "name": "Premier League"},
         "LALIGA":     {"id": "12", "name": "La Liga"},
         "BUNDESLIGA": {"id": "20", "name": "Bundesliga"},
-        # … add more static leagues as needed …
+        # ... add more static leagues as needed ...
     }
 
     @classmethod
@@ -161,8 +161,10 @@ class LeagueManager:
         if code:
             key = code.upper()
             if key in cls.LEAGUE_MAP:
+                logger.info(f"Found league in static map: {key}")
                 return cls.LEAGUE_MAP[key]
-            # 2) Dynamic fetch
+            
+            # 2) Dynamic fetch - only if not found in static map
             try:
                 all_leagues = cls.fetch_all()
                 if key in all_leagues:
@@ -170,12 +172,29 @@ class LeagueManager:
                 for lid, lname in all_leagues.items():
                     if lname.upper() == key:
                         return {"id": lid, "name": lname}
-            except Exception:
+            except Exception as e:
+                logger.error(f"Error fetching leagues: {e}")
                 pass
+                
         # 3) Custom override
         if custom_id and custom_name:
             return {"id": custom_id, "name": custom_name}
+        elif custom_id:
+            # Try to get name from league ID
+            try:
+                all_leagues = cls.fetch_all()
+                if custom_id in all_leagues:
+                    return {"id": custom_id, "name": all_leagues[custom_id]}
+            except Exception:
+                pass
+            return {"id": custom_id, "name": f"League {custom_id}"}
 
+        # Debug output to help troubleshoot
+        if code:
+            logger.error(f"League code '{code}' not found in static map: {cls.LEAGUE_MAP.keys()}")
+        if custom_id:
+            logger.error(f"League ID '{custom_id}' not recognized")
+            
         raise ValueError("League not recognized. Use --fetch-all-leagues to view available IDs.")
 
 
@@ -265,24 +284,31 @@ class UniversalScraper:
         os.makedirs(output_dir, exist_ok=True)
 
     def run(self, task: Dict[str, Any]) -> Dict[str, Any]:
-        info        = LeagueManager.get_info(
+        logger.info(f"Running task with parameters: {task}")
+        
+        info = LeagueManager.get_info(
             code=task.get("league"),
             custom_id=task.get("league_id"),
             custom_name=task.get("league_name"),
         )
+        
         league_id   = info["id"]
         league_name = info["name"]
         lookback    = task.get("lookback", 7)
         pairs       = task.get("teams", [])
+        
+        logger.info(f"Using league: {league_name} (ID: {league_id})")
 
         dfs, failures = [], []
         for home, away in pairs:
             for team in (home, away):
                 try:
+                    logger.info(f"Fetching data for {team}")
                     df = self.parser.parse_recent(league_id, league_name, team, lookback)
                     dfs.append(df)
                     logger.info(f"{team}: {len(df)} matches")
                 except Exception as e:
+                    logger.error(f"Failed to get data for {team}: {e}")
                     failures.append({"team": team, "error": str(e)})
 
         if not dfs:
@@ -339,7 +365,7 @@ def main():
             task["teams"] = [p.split(",") for p in args.pairs]
 
     scraper = UniversalScraper()
-    print(f"Starting scrape for {task.get('league') or task.get('league_name')}…")
+    print(f"Starting scrape for {task.get('league') or task.get('league_name') or task.get('league_id')}...")
     result = scraper.run(task)
     print(f"Done. Rows: {result['rows']}  CSV: {result['csv']}")
     if result["failures"]:
