@@ -13,7 +13,7 @@ import io
 import hashlib
 import sys
 from dotenv import load_dotenv
-from improved_rate_limit_handler import RateLimitHandler
+from rate_limit_handler import RateLimitHandler
 from proxy_helper import ProxyManager
 
 # Load environment variables

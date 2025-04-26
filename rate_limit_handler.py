@@ -9,6 +9,7 @@ import random
 import logging
 import json
 from datetime import datetime, timedelta
+from rate_limit_handler import RateLimitHandler
 
 logger = logging.getLogger("fbref_scraper")
 

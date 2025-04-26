@@ -19,7 +19,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Import our scraper modules
 from fbref_scraper import FBrefScraper, FBrefDatabaseManager
-from improved_rate_limit_handler import RateLimitHandler
+from rate_limit_handler import RateLimitHandler  # Changed from improved_rate_limit_handler
 
 # Load environment variables
 load_dotenv()
