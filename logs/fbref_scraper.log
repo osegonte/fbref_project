@@ -124,3 +124,61 @@
 2025-04-25 23:20:35,373 - WARNING - No valid data found for team at https://fbref.com/en/squads/47c64c55/Crystal-Palace-Stats
 2025-04-25 23:20:35,373 - INFO - Scraping Everton for 2025 season
 2025-04-25 23:20:37,291 - WARNING - Rate limited, retrying in 2.00 seconds (attempt 1/3)
+2025-04-25 23:20:42,527 - WARNING - Rate limited, retrying in 4.00 seconds (attempt 2/3)
+2025-04-25 23:20:52,142 - WARNING - Rate limited, retrying in 8.00 seconds (attempt 3/3)
+2025-04-25 23:21:09,521 - ERROR - Maximum retries reached for https://fbref.com/en/squads/d3fd31cc/Everton-Stats
+2025-04-25 23:21:09,521 - ERROR - Failed to get team page HTML for Everton
+2025-04-25 23:21:09,521 - WARNING - No valid data found for team at https://fbref.com/en/squads/d3fd31cc/Everton-Stats
+2025-04-25 23:21:09,521 - INFO - Scraping Manchester United for 2025 season
+2025-04-25 23:21:11,170 - WARNING - Rate limited, retrying in 2.00 seconds (attempt 1/3)
+2025-04-25 23:21:16,766 - WARNING - Rate limited, retrying in 4.00 seconds (attempt 2/3)
+2025-04-25 23:21:26,349 - WARNING - Rate limited, retrying in 8.00 seconds (attempt 3/3)
+2025-04-25 23:21:43,642 - ERROR - Maximum retries reached for https://fbref.com/en/squads/19538871/Manchester-United-Stats
+2025-04-25 23:21:43,642 - ERROR - Failed to get team page HTML for Manchester United
+2025-04-25 23:21:43,642 - WARNING - No valid data found for team at https://fbref.com/en/squads/19538871/Manchester-United-Stats
+2025-04-25 23:21:43,642 - INFO - Scraping Wolverhampton Wanderers for 2025 season
+2025-04-25 23:21:45,409 - WARNING - Rate limited, retrying in 2.00 seconds (attempt 1/3)
+2025-04-25 23:21:49,840 - WARNING - Rate limited, retrying in 4.00 seconds (attempt 2/3)
+2025-04-25 23:21:58,749 - WARNING - Rate limited, retrying in 8.00 seconds (attempt 3/3)
+2025-04-25 23:22:16,608 - ERROR - Maximum retries reached for https://fbref.com/en/squads/8cec06e1/Wolverhampton-Wanderers-Stats
+2025-04-25 23:22:16,609 - ERROR - Failed to get team page HTML for Wolverhampton Wanderers
+2025-04-25 23:22:16,609 - WARNING - No valid data found for team at https://fbref.com/en/squads/8cec06e1/Wolverhampton-Wanderers-Stats
+2025-04-25 23:22:16,609 - INFO - Scraping Tottenham Hotspur for 2025 season
+2025-04-25 23:22:19,247 - WARNING - Rate limited, retrying in 2.00 seconds (attempt 1/3)
+2025-04-25 23:22:23,995 - WARNING - Rate limited, retrying in 4.00 seconds (attempt 2/3)
+2025-04-25 23:22:32,343 - WARNING - Rate limited, retrying in 8.00 seconds (attempt 3/3)
+2025-04-25 23:22:49,941 - ERROR - Maximum retries reached for https://fbref.com/en/squads/361ca564/Tottenham-Hotspur-Stats
+2025-04-25 23:22:49,942 - ERROR - Failed to get team page HTML for Tottenham Hotspur
+2025-04-25 23:22:49,942 - WARNING - No valid data found for team at https://fbref.com/en/squads/361ca564/Tottenham-Hotspur-Stats
+2025-04-25 23:22:49,942 - INFO - Scraping West Ham United for 2025 season
+2025-04-25 23:22:52,677 - WARNING - Rate limited, retrying in 2.00 seconds (attempt 1/3)
+2025-04-25 23:22:57,972 - WARNING - Rate limited, retrying in 4.00 seconds (attempt 2/3)
+2025-04-25 23:23:06,705 - WARNING - Rate limited, retrying in 8.00 seconds (attempt 3/3)
+2025-04-25 23:23:23,135 - ERROR - Maximum retries reached for https://fbref.com/en/squads/7c21e445/West-Ham-United-Stats
+2025-04-25 23:23:23,136 - ERROR - Failed to get team page HTML for West Ham United
+2025-04-25 23:23:23,136 - WARNING - No valid data found for team at https://fbref.com/en/squads/7c21e445/West-Ham-United-Stats
+2025-04-25 23:23:23,136 - INFO - Scraping Ipswich Town for 2025 season
+2025-04-25 23:23:24,532 - WARNING - Rate limited, retrying in 2.00 seconds (attempt 1/3)
+2025-04-25 23:23:30,006 - WARNING - Rate limited, retrying in 4.00 seconds (attempt 2/3)
+2025-04-25 23:23:39,030 - WARNING - Rate limited, retrying in 8.00 seconds (attempt 3/3)
+2025-04-25 23:23:55,320 - ERROR - Maximum retries reached for https://fbref.com/en/squads/b74092de/Ipswich-Town-Stats
+2025-04-25 23:23:55,320 - ERROR - Failed to get team page HTML for Ipswich Town
+2025-04-25 23:23:55,320 - WARNING - No valid data found for team at https://fbref.com/en/squads/b74092de/Ipswich-Town-Stats
+2025-04-25 23:23:55,320 - INFO - Scraping Leicester City for 2025 season
+2025-04-25 23:23:57,655 - WARNING - Rate limited, retrying in 2.00 seconds (attempt 1/3)
+2025-04-25 23:24:02,332 - WARNING - Rate limited, retrying in 4.00 seconds (attempt 2/3)
+2025-04-25 23:24:10,950 - WARNING - Rate limited, retrying in 8.00 seconds (attempt 3/3)
+2025-04-25 23:24:27,217 - ERROR - Maximum retries reached for https://fbref.com/en/squads/a2d435b3/Leicester-City-Stats
+2025-04-25 23:24:27,217 - ERROR - Failed to get team page HTML for Leicester City
+2025-04-25 23:24:27,217 - WARNING - No valid data found for team at https://fbref.com/en/squads/a2d435b3/Leicester-City-Stats
+2025-04-25 23:24:27,217 - INFO - Scraping Southampton for 2025 season
+2025-04-25 23:24:29,893 - WARNING - Rate limited, retrying in 2.00 seconds (attempt 1/3)
+2025-04-25 23:24:34,949 - WARNING - Rate limited, retrying in 4.00 seconds (attempt 2/3)
+2025-04-25 23:24:43,895 - WARNING - Rate limited, retrying in 8.00 seconds (attempt 3/3)
+2025-04-25 23:25:02,054 - ERROR - Maximum retries reached for https://fbref.com/en/squads/33c895d4/Southampton-Stats
+2025-04-25 23:25:02,055 - ERROR - Failed to get team page HTML for Southampton
+2025-04-25 23:25:02,055 - WARNING - No valid data found for team at https://fbref.com/en/squads/33c895d4/Southampton-Stats
+2025-04-25 23:25:02,076 - INFO - Data saved to data/recent_matches.csv
+2025-04-25 23:25:02,077 - INFO - Saved backup to data/recent_matches.csv
+2025-04-25 23:25:02,087 - INFO - Stored/updated 56 matches in the database
+2025-04-25 23:25:02,239 - INFO - Retrieved 7 recent matches for Liverpool
