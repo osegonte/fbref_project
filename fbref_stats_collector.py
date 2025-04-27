@@ -449,144 +449,6 @@ class FBrefStatsCollector:
             
             logger.warning(f"No team ID found for '{team_name}' in league {league_id}")
             return None
-    
-    def process_teams_in_batches(self, team_leagues):
-        """Process teams in batches to avoid rate limiting."""
-        all_data = []
-        teams = list(team_leagues.keys())
-        
-        # Process in batches
-        for i in range(0, len(teams), self.batch_size):
-            batch = teams[i:i+self.batch_size]
-            logger.info(f"Processing batch {i//self.batch_size + 1}/{(len(teams)-1)//self.batch_size + 1} with {len(batch)} teams")
-            
-            batch_data = []
-            for team in batch:
-                league_info = self.map_league_to_fbref(
-                    team_leagues[team]['league'],
-                    team_leagues[team]['country']
-                )
-                
-                df = self.get_team_match_data(team, league_info, self.lookback)
-                if df is not None and not df.empty:
-                    batch_data.append(df)
-            
-            # Add batch data to all data
-            if batch_data:
-                all_data.extend(batch_data)
-                
-            # Sleep between batches to avoid rate limiting
-            if i + self.batch_size < len(teams):
-                sleep_time = random.uniform(self.delay_between_batches * 0.8, self.delay_between_batches * 1.2)
-                logger.info(f"Sleeping for {sleep_time:.1f} seconds between batches")
-                time.sleep(sleep_time)
-        
-        # Combine all data
-        if not all_data:
-            logger.error("No match data collected for any team")
-            return pd.DataFrame()
-            
-        combined = pd.concat(all_data, ignore_index=True)
-        logger.info(f"Collected {len(combined)} total matches for {len(all_data)} teams")
-        return combined
-    
-    def save_output(self, match_data):
-        """Save the collected match data to CSV files."""
-        if match_data.empty:
-            logger.error("No data to save")
-            return None
-            
-        # Create output files
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = os.path.join(self.output_dir, f"team_match_stats_{timestamp}.csv")
-        
-        # Save to CSV
-        match_data.to_csv(output_file, index=False)
-        logger.info(f"Saved {len(match_data)} matches to {output_file}")
-        
-        # Also save by league
-        leagues = match_data['league_name'].unique()
-        for league in leagues:
-            league_data = match_data[match_data['league_name'] == league]
-            league_file = os.path.join(self.output_dir, f"{league.replace(' ', '_')}_{timestamp}.csv")
-            league_data.to_csv(league_file, index=False)
-            logger.info(f"Saved {len(league_data)} {league} matches to {league_file}")
-        
-        return output_file
-
-
-def main():
-    """Main entry point for the script."""
-    parser = argparse.ArgumentParser(description="FBref Match Stats Collector")
-    parser.add_argument("--input-file", help="Input CSV file with fixture data")
-    parser.add_argument("--daily-dir", default="sofascore_data/daily", help="Directory with daily CSV files")
-    parser.add_argument("--output-dir", default="data/team_stats", help="Directory for output data")
-    parser.add_argument("--cache-dir", default="data/cache", help="Directory for HTTP cache")
-    parser.add_argument("--lookback", type=int, default=7, help="Number of past matches to collect per team")
-    parser.add_argument("--batch-size", type=int, default=3, help="Number of teams to process in a batch")
-    parser.add_argument("--batch-delay", type=int, default=60, help="Delay between batches in seconds")
-    parser.add_argument("--max-teams", type=int, default=0, help="Max teams to process (0 for all)")
-    parser.add_argument("--date-range", type=int, default=7, help="Number of days to consider")
-    
-    args = parser.parse_args()
-    
-    try:
-        # Initialize collector
-        collector = FBrefStatsCollector(
-            output_dir=args.output_dir,
-            cache_dir=args.cache_dir,
-            lookback=args.lookback,
-            batch_size=args.batch_size,
-            delay_between_batches=args.batch_delay
-        )
-        
-        # Run collector
-        output_file = collector.run(
-            input_file=args.input_file,
-            date_range=args.date_range,
-            source_dir=args.daily_dir,
-            max_teams=args.max_teams
-        )
-        
-        if output_file:
-            print(f"\nSuccess! Match data collected and saved to: {output_file}")
-            return 0
-        else:
-            print("\nFailed to collect match data. Check logs for details.")
-            return 1
-            
-    except Exception as e:
-        logger.exception(f"Unhandled exception: {e}")
-        print(f"\nError: {e}")
-        return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-    
-    def run(self, input_file=None, date_range=7, source_dir="sofascore_data/daily", max_teams=0):
-        """Run the full collection process."""
-        # Step 1: Load fixture data
-        fixtures = self.load_fixture_data(input_file, date_range, source_dir, max_teams)
-        if fixtures.empty:
-            logger.error("No fixtures found, aborting")
-            return None
-        
-        # Step 2: Extract teams and leagues
-        team_leagues = self.extract_teams_and_leagues(fixtures)
-        if not team_leagues:
-            logger.error("No teams extracted, aborting")
-            return None
-        
-        # Step 3: Process teams in batches
-        match_data = self.process_teams_in_batches(team_leagues)
-        if match_data.empty:
-            logger.error("No match data collected, aborting")
-            return None
-        
-        # Step 4: Save output
-        output_file = self.save_output(match_data)
-        return output_file
             
         except Exception as e:
             logger.error(f"Error finding team ID for '{team_name}': {e}")
@@ -879,3 +741,140 @@ if __name__ == "__main__":
         except Exception as e:
             logger.error(f"Error getting team data from schedule for {team_name}: {e}")
             return None
+            
+    def process_teams_in_batches(self, team_leagues):
+        """Process teams in batches to avoid rate limiting."""
+        all_data = []
+        teams = list(team_leagues.keys())
+        
+        # Process in batches
+        for i in range(0, len(teams), self.batch_size):
+            batch = teams[i:i+self.batch_size]
+            logger.info(f"Processing batch {i//self.batch_size + 1}/{(len(teams)-1)//self.batch_size + 1} with {len(batch)} teams")
+            
+            batch_data = []
+            for team in batch:
+                league_info = self.map_league_to_fbref(
+                    team_leagues[team]['league'],
+                    team_leagues[team]['country']
+                )
+                
+                df = self.get_team_match_data(team, league_info, self.lookback)
+                if df is not None and not df.empty:
+                    batch_data.append(df)
+            
+            # Add batch data to all data
+            if batch_data:
+                all_data.extend(batch_data)
+                
+            # Sleep between batches to avoid rate limiting
+            if i + self.batch_size < len(teams):
+                sleep_time = random.uniform(self.delay_between_batches * 0.8, self.delay_between_batches * 1.2)
+                logger.info(f"Sleeping for {sleep_time:.1f} seconds between batches")
+                time.sleep(sleep_time)
+        
+        # Combine all data
+        if not all_data:
+            logger.error("No match data collected for any team")
+            return pd.DataFrame()
+            
+        combined = pd.concat(all_data, ignore_index=True)
+        logger.info(f"Collected {len(combined)} total matches for {len(all_data)} teams")
+        return combined
+    
+    def save_output(self, match_data):
+        """Save the collected match data to CSV files."""
+        if match_data.empty:
+            logger.error("No data to save")
+            return None
+            
+        # Create output files
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = os.path.join(self.output_dir, f"team_match_stats_{timestamp}.csv")
+        
+        # Save to CSV
+        match_data.to_csv(output_file, index=False)
+        logger.info(f"Saved {len(match_data)} matches to {output_file}")
+        
+        # Also save by league
+        leagues = match_data['league_name'].unique()
+        for league in leagues:
+            league_data = match_data[match_data['league_name'] == league]
+            league_file = os.path.join(self.output_dir, f"{league.replace(' ', '_')}_{timestamp}.csv")
+            league_data.to_csv(league_file, index=False)
+            logger.info(f"Saved {len(league_data)} {league} matches to {league_file}")
+        
+        return output_file
+
+    def run(self, input_file=None, date_range=7, source_dir="sofascore_data/daily", max_teams=0):
+        """Run the full collection process."""
+        # Step 1: Load fixture data
+        fixtures = self.load_fixture_data(input_file, date_range, source_dir, max_teams)
+        if fixtures.empty:
+            logger.error("No fixtures found, aborting")
+            return None
+        
+        # Step 2: Extract teams and leagues
+        team_leagues = self.extract_teams_and_leagues(fixtures)
+        if not team_leagues:
+            logger.error("No teams extracted, aborting")
+            return None
+        
+        # Step 3: Process teams in batches
+        match_data = self.process_teams_in_batches(team_leagues)
+        if match_data.empty:
+            logger.error("No match data collected, aborting")
+            return None
+        
+        # Step 4: Save output
+        output_file = self.save_output(match_data)
+        return output_file
+
+def main():
+    """Main entry point for the script."""
+    parser = argparse.ArgumentParser(description="FBref Match Stats Collector")
+    parser.add_argument("--input-file", help="Input CSV file with fixture data")
+    parser.add_argument("--daily-dir", default="sofascore_data/daily", help="Directory with daily CSV files")
+    parser.add_argument("--output-dir", default="data/team_stats", help="Directory for output data")
+    parser.add_argument("--cache-dir", default="data/cache", help="Directory for HTTP cache")
+    parser.add_argument("--lookback", type=int, default=7, help="Number of past matches to collect per team")
+    parser.add_argument("--batch-size", type=int, default=3, help="Number of teams to process in a batch")
+    parser.add_argument("--batch-delay", type=int, default=60, help="Delay between batches in seconds")
+    parser.add_argument("--max-teams", type=int, default=0, help="Max teams to process (0 for all)")
+    parser.add_argument("--date-range", type=int, default=7, help="Number of days to consider")
+    
+    args = parser.parse_args()
+    
+    try:
+        # Initialize collector
+        collector = FBrefStatsCollector(
+            output_dir=args.output_dir,
+            cache_dir=args.cache_dir,
+            lookback=args.lookback,
+            batch_size=args.batch_size,
+            delay_between_batches=args.batch_delay
+        )
+        
+        # Run collector
+        output_file = collector.run(
+            input_file=args.input_file,
+            date_range=args.date_range,
+            source_dir=args.daily_dir,
+            max_teams=args.max_teams
+        )
+        
+        if output_file:
+            print(f"\nSuccess! Match data collected and saved to: {output_file}")
+            return 0
+        else:
+            print("\nFailed to collect match data. Check logs for details.")
+            return 1
+            
+    except Exception as e:
+        logger.exception(f"Unhandled exception: {e}")
+        print(f"\nError: {e}")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
