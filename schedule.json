@@ -1,0 +1,35 @@
+{
+  "daily_fixture_update": {
+    "script": "pipeline_controller.py",
+    "args": [
+      "--fixtures-only"
+    ],
+    "schedule": "daily",
+    "time": "06:00"
+  },
+  "daily_team_stats": {
+    "script": "pipeline_controller.py",
+    "args": [
+      "--stats-only"
+    ],
+    "schedule": "daily",
+    "time": "08:00"
+  },
+  "match_analyzer": {
+    "script": "match_analyzer.py",
+    "args": [
+      "--upcoming"
+    ],
+    "schedule": "daily",
+    "time": "10:00"
+  },
+  "weekly_export": {
+    "script": "db_export.py",
+    "args": [
+      "--team-reports"
+    ],
+    "schedule": "weekly",
+    "day": "Monday",
+    "time": "00:00"
+  }
+}
