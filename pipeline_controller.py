@@ -22,6 +22,7 @@ import time
 import argparse
 import logging
 import json
+import glob
 from datetime import datetime, timedelta, date
 import pandas as pd
 from sqlalchemy import create_engine, text
@@ -462,6 +463,28 @@ def export_team_reports(engine, output_dir="data/reports"):
         logger.exception(f"Error exporting team reports: {e}")
         return {'success': False, 'error': str(e)}
 
+def find_latest_fixtures_csv():
+    """Find the most recent fixtures CSV file"""
+    try:
+        # Look for all fixtures CSV files
+        fixture_files = glob.glob("sofascore_data/all_matches_*.csv")
+        
+        if not fixture_files:
+            # Try daily files
+            fixture_files = glob.glob("sofascore_data/daily/matches_*.csv")
+            
+        if fixture_files:
+            # Get the most recent file
+            latest_file = max(fixture_files, key=os.path.getctime)
+            logger.info(f"Found most recent fixtures CSV: {latest_file}")
+            return latest_file
+        else:
+            logger.error("No fixtures CSV files found")
+            return None
+    except Exception as e:
+        logger.exception(f"Error finding fixtures CSV: {e}")
+        return None
+
 def run_full_pipeline(args):
     """Run the complete data pipeline"""
     logger.info("Starting full pipeline run")
@@ -478,6 +501,8 @@ def run_full_pipeline(args):
     
     try:
         # Step 1: Fetch fixture data
+        fixtures_csv = None
+        
         if args.fixtures_only or not args.stats_only:
             logger.info("Step 1: Fetching fixture data")
             fixtures_result = fetch_fixtures(
@@ -504,36 +529,50 @@ def run_full_pipeline(args):
         if args.stats_only or not args.fixtures_only:
             logger.info("Step 2: Collecting team statistics")
             
-            # If fixtures_only was run, we need fixtures_csv
-            if args.fixtures_only:
-                fixtures_csv = results['fixtures']['csv_path']
+            # If fixtures were fetched in this run, use that CSV
+            if fixtures_csv:
+                logger.info(f"Using fixtures CSV from current run: {fixtures_csv}")
+            # If stats-only, find the most recent fixtures file
+            elif args.stats_only:
+                fixtures_csv = find_latest_fixtures_csv()
+                if not fixtures_csv:
+                    logger.error("No fixtures CSV file found. Please run with --fixtures-only first")
+                    return results
+                logger.info(f"Using most recent fixtures file: {fixtures_csv}")
+            # For specific date, try to find a matching file
             elif args.specific_date:
-                # Find the fixtures CSV for the specific date
+                # Parse the date
                 if isinstance(args.specific_date, str):
                     target_date = datetime.strptime(args.specific_date, "%Y-%m-%d").date()
                 else:
                     target_date = args.specific_date
                 
-                # Look for fixtures CSV with this date
-                fixtures_dir = "sofascore_data"
-                for file in os.listdir(fixtures_dir):
-                    if file.startswith("all_matches_") and file.endswith(".csv"):
-                        if args.specific_date in file:
-                            fixtures_csv = os.path.join(fixtures_dir, file)
-                            break
+                # Look for a file with this date
+                date_str = target_date.strftime("%Y-%m-%d")
+                daily_file = f"sofascore_data/daily/matches_{date_str}.csv"
+                
+                if os.path.exists(daily_file):
+                    fixtures_csv = daily_file
+                    logger.info(f"Using daily fixtures file for {date_str}: {fixtures_csv}")
                 else:
-                    # If not found, use daily file
-                    daily_file = os.path.join(
-                        fixtures_dir,
-                        "daily",
-                        f"matches_{target_date.strftime('%Y-%m-%d')}.csv"
-                    )
-                    if os.path.exists(daily_file):
-                        fixtures_csv = daily_file
-                    else:
-                        logger.error(f"No fixtures found for {args.specific_date}")
+                    # Try to find a multi-day file that includes this date
+                    fixture_files = glob.glob("sofascore_data/all_matches_*.csv")
+                    for file in fixture_files:
+                        if date_str in file:
+                            fixtures_csv = file
+                            logger.info(f"Using fixtures file that includes {date_str}: {fixtures_csv}")
+                            break
+                    
+                    if not fixtures_csv:
+                        logger.error(f"No fixtures file found for {date_str}")
                         return results
             
+            # Check if we have a fixtures CSV to use
+            if not fixtures_csv:
+                logger.error("No fixtures CSV file available. Please run with --fixtures-only first")
+                return results
+            
+            # Collect team statistics
             team_stats_result = collect_team_stats(fixtures_csv, max_teams=args.max_teams)
             results['team_stats'] = team_stats_result
             

@@ -346,6 +346,8 @@ def analyze_upcoming_matches(days=7, output_dir="data/analysis/upcoming"):
             # Simple prediction logic (can be enhanced)
             home_strength = home_stats.get('avg_points', 0) or 0
             away_strength = away_stats.get('avg_points', 0) or 0
+            home_strength = float(home_strength or 0)
+            away_strength = float(away_strength or 0)
             
             # Adjust for home advantage
             home_advantage = 0.2
