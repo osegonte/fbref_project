@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Football Data Pipeline Controller
+Football Data Pipeline Controller (Fixed Version)
 
 This script orchestrates the entire data pipeline:
 1. Fetch fixtures from SofaScore
@@ -10,10 +10,11 @@ This script orchestrates the entire data pipeline:
 5. Export to CSV files for visualization
 
 Usage:
-  python pipeline_controller.py --full-run      # Run the complete pipeline
-  python pipeline_controller.py --fixtures-only # Only fetch fixture data
-  python pipeline_controller.py --stats-only    # Only collect team statistics
-  python pipeline_controller.py --specific-date 2025-05-01  # Process specific date
+  python pipeline_controller_fixed.py --full-run      # Run the complete pipeline
+  python pipeline_controller_fixed.py --fixtures-only # Only fetch fixture data
+  python pipeline_controller_fixed.py --stats-only    # Only collect team statistics
+  python pipeline_controller_fixed.py --specific-date 2025-05-01  # Process specific date
+  python pipeline_controller_fixed.py --verify-team Liverpool  # Verify data for a specific team
 """
 
 import os
@@ -23,9 +24,11 @@ import argparse
 import logging
 import json
 import glob
-from datetime import datetime, timedelta, date
 import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta, date
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -143,7 +146,7 @@ def collect_team_stats(fixtures_csv, max_teams=0):
         return {'success': False, 'error': str(e)}
 
 def store_fixtures_in_db(fixtures_csv, engine):
-    """Store fixture data in the database"""
+    """Store fixture data in the database with improved error handling"""
     try:
         logger.info(f"Loading fixtures data from {fixtures_csv}")
         df = pd.read_csv(fixtures_csv)
@@ -161,6 +164,10 @@ def store_fixtures_in_db(fixtures_csv, engine):
             teams.add(row['away_team'])
         
         logger.info(f"Found {len(teams)} unique teams")
+        
+        # Create an export folder for real-time CSV checks
+        export_dir = "data/db_exports"
+        os.makedirs(export_dir, exist_ok=True)
         
         # Store teams
         with engine.begin() as conn:
@@ -187,8 +194,8 @@ def store_fixtures_in_db(fixtures_csv, engine):
                     fixture_id SERIAL PRIMARY KEY,
                     match_id VARCHAR(100) UNIQUE,
                     date DATE NOT NULL,
-                    home_team VARCHAR(50) NOT NULL,
-                    away_team VARCHAR(50) NOT NULL,
+                    home_team VARCHAR(100) NOT NULL,
+                    away_team VARCHAR(100) NOT NULL,
                     league VARCHAR(100),
                     country VARCHAR(50),
                     start_time VARCHAR(20),
@@ -229,34 +236,50 @@ def store_fixtures_in_db(fixtures_csv, engine):
             }
             fixtures_data.append(fixture)
         
-        # Store fixtures in database
-        with engine.begin() as conn:
-            for fixture in fixtures_data:
-                # Use upsert (insert or update)
-                conn.execute(text("""
-                    INSERT INTO fixtures 
-                    (match_id, date, home_team, away_team, league, country, 
-                     start_time, start_timestamp, venue, status, source)
-                    VALUES 
-                    (:match_id, :date, :home_team, :away_team, :league, :country,
-                     :start_time, :start_timestamp, :venue, :status, :source)
-                    ON CONFLICT (match_id) 
-                    DO UPDATE SET
-                    status = EXCLUDED.status,
-                    start_time = EXCLUDED.start_time,
-                    start_timestamp = EXCLUDED.start_timestamp,
-                    venue = EXCLUDED.venue
-                """), fixture)
+        # Store fixtures in database with error handling
+        successful_inserts = 0
+        failed_inserts = 0
         
-        logger.info(f"Successfully stored {len(fixtures_data)} fixtures in database")
-        return {'success': True, 'fixtures_count': len(fixtures_data)}
+        for fixture in fixtures_data:
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text("""
+                        INSERT INTO fixtures 
+                        (match_id, date, home_team, away_team, league, country, 
+                         start_time, start_timestamp, venue, status, source)
+                        VALUES 
+                        (:match_id, :date, :home_team, :away_team, :league, :country,
+                         :start_time, :start_timestamp, :venue, :status, :source)
+                        ON CONFLICT (match_id) 
+                        DO UPDATE SET
+                        status = EXCLUDED.status,
+                        start_time = EXCLUDED.start_time,
+                        start_timestamp = EXCLUDED.start_timestamp,
+                        venue = EXCLUDED.venue
+                    """), fixture)
+                    successful_inserts += 1
+            except SQLAlchemyError as e:
+                logger.error(f"Error inserting fixture {fixture['match_id']}: {e}")
+                failed_inserts += 1
+        
+        # Export all fixtures to CSV for verification
+        with engine.connect() as conn:
+            query = text("SELECT * FROM fixtures ORDER BY date DESC")
+            result = conn.execute(query)
+            fixtures_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+            fixtures_export = os.path.join(export_dir, "fixtures_export.csv")
+            fixtures_df.to_csv(fixtures_export, index=False)
+            logger.info(f"Exported all fixtures to {fixtures_export}")
+        
+        logger.info(f"Successfully stored {successful_inserts} fixtures in database ({failed_inserts} failed)")
+        return {'success': True, 'fixtures_count': successful_inserts, 'failed_count': failed_inserts}
             
     except Exception as e:
         logger.exception(f"Error storing fixtures in database: {e}")
         return {'success': False, 'error': str(e)}
 
 def store_team_stats_in_db(stats_csv, engine):
-    """Store team statistics in the database"""
+    """Store team statistics in the database with improved error handling"""
     try:
         logger.info(f"Loading team stats from {stats_csv}")
         df = pd.read_csv(stats_csv)
@@ -267,9 +290,14 @@ def store_team_stats_in_db(stats_csv, engine):
         
         logger.info(f"Processing {len(df)} match records for database storage")
         
+        # Create an export folder for real-time CSV checks
+        export_dir = "data/db_exports"
+        os.makedirs(export_dir, exist_ok=True)
+        
         # Process and store matches
         stats_data = []
         for _, row in df.iterrows():
+            # Handle missing or NaN values
             stat = {
                 'match_id': row['match_id'],
                 'date': row['date'],
@@ -277,18 +305,18 @@ def store_team_stats_in_db(stats_csv, engine):
                 'opponent': row['opponent'],
                 'venue': row['venue'],
                 'result': row['result'],
-                'gf': row.get('gf', None),
-                'ga': row.get('ga', None),
-                'points': row.get('points', None),
-                'sh': row.get('sh', None),
-                'sot': row.get('sot', None),
-                'dist': row.get('dist', None),
-                'fk': row.get('fk', None),
-                'pk': row.get('pk', None),
-                'pkatt': row.get('pkatt', None),
-                'possession': row.get('possession', None),
-                'xg': row.get('xg', None),
-                'xga': row.get('xga', None),
+                'gf': None if pd.isna(row.get('gf')) else row.get('gf'),
+                'ga': None if pd.isna(row.get('ga')) else row.get('ga'),
+                'points': None if pd.isna(row.get('points')) else row.get('points'),
+                'sh': None if pd.isna(row.get('sh')) else row.get('sh'),
+                'sot': None if pd.isna(row.get('sot')) else row.get('sot'),
+                'dist': None if pd.isna(row.get('dist')) else row.get('dist'),
+                'fk': None if pd.isna(row.get('fk')) else row.get('fk'),
+                'pk': None if pd.isna(row.get('pk')) else row.get('pk'),
+                'pkatt': None if pd.isna(row.get('pkatt')) else row.get('pkatt'),
+                'possession': None if pd.isna(row.get('possession')) else row.get('possession'),
+                'xg': None if pd.isna(row.get('xg')) else row.get('xg'),
+                'xga': None if pd.isna(row.get('xga')) else row.get('xga'),
                 'comp': row.get('comp', None),
                 'round': row.get('round', None),
                 'season': row.get('season', None),
@@ -297,38 +325,88 @@ def store_team_stats_in_db(stats_csv, engine):
             }
             stats_data.append(stat)
         
-        # Store matches in database
+        # Create recent_matches table if it doesn't exist
         with engine.begin() as conn:
-            for stat in stats_data:
-                # Use upsert (insert or update)
-                conn.execute(text("""
-                    INSERT INTO recent_matches 
-                    (match_id, date, team, opponent, venue, result, gf, ga, points,
-                     sh, sot, dist, fk, pk, pkatt, possession, xg, xga,
-                     comp, round, season, is_home, scrape_date)
-                    VALUES 
-                    (:match_id, :date, :team, :opponent, :venue, :result, :gf, :ga, :points,
-                     :sh, :sot, :dist, :fk, :pk, :pkatt, :possession, :xg, :xga,
-                     :comp, :round, :season, :is_home, :scrape_date)
-                    ON CONFLICT (match_id) 
-                    DO UPDATE SET
-                    gf = EXCLUDED.gf,
-                    ga = EXCLUDED.ga,
-                    points = EXCLUDED.points,
-                    sh = EXCLUDED.sh,
-                    sot = EXCLUDED.sot,
-                    dist = EXCLUDED.dist,
-                    fk = EXCLUDED.fk,
-                    pk = EXCLUDED.pk,
-                    pkatt = EXCLUDED.pkatt,
-                    possession = EXCLUDED.possession,
-                    xg = EXCLUDED.xg,
-                    xga = EXCLUDED.xga,
-                    scrape_date = EXCLUDED.scrape_date
-                """), stat)
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS recent_matches (
+                    match_id VARCHAR(100) PRIMARY KEY,
+                    date DATE NOT NULL,
+                    team VARCHAR(100) NOT NULL,
+                    opponent VARCHAR(100) NOT NULL,
+                    venue VARCHAR(20),
+                    result CHAR(1),
+                    gf INTEGER,
+                    ga INTEGER,
+                    points INTEGER,
+                    sh INTEGER,
+                    sot INTEGER,
+                    dist FLOAT,
+                    fk FLOAT,
+                    pk INTEGER,
+                    pkatt INTEGER,
+                    possession FLOAT,
+                    corners_for INTEGER,
+                    corners_against INTEGER,
+                    xg FLOAT,
+                    xga FLOAT,
+                    comp VARCHAR(100),
+                    round VARCHAR(100),
+                    season INTEGER,
+                    is_home BOOLEAN,
+                    scrape_date TIMESTAMP
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_recent_matches_team ON recent_matches(team)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_recent_matches_date ON recent_matches(date)"))
         
-        logger.info(f"Successfully stored {len(stats_data)} match records in database")
-        return {'success': True, 'matches_count': len(stats_data)}
+        # Store matches in database with error handling
+        successful_inserts = 0
+        failed_inserts = 0
+        
+        for stat in stats_data:
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text("""
+                        INSERT INTO recent_matches 
+                        (match_id, date, team, opponent, venue, result, gf, ga, points,
+                         sh, sot, dist, fk, pk, pkatt, possession, xg, xga,
+                         comp, round, season, is_home, scrape_date)
+                        VALUES 
+                        (:match_id, :date, :team, :opponent, :venue, :result, :gf, :ga, :points,
+                         :sh, :sot, :dist, :fk, :pk, :pkatt, :possession, :xg, :xga,
+                         :comp, :round, :season, :is_home, :scrape_date)
+                        ON CONFLICT (match_id) 
+                        DO UPDATE SET
+                        gf = COALESCE(EXCLUDED.gf, recent_matches.gf),
+                        ga = COALESCE(EXCLUDED.ga, recent_matches.ga),
+                        points = COALESCE(EXCLUDED.points, recent_matches.points),
+                        sh = COALESCE(EXCLUDED.sh, recent_matches.sh),
+                        sot = COALESCE(EXCLUDED.sot, recent_matches.sot),
+                        dist = COALESCE(EXCLUDED.dist, recent_matches.dist),
+                        fk = COALESCE(EXCLUDED.fk, recent_matches.fk),
+                        pk = COALESCE(EXCLUDED.pk, recent_matches.pk),
+                        pkatt = COALESCE(EXCLUDED.pkatt, recent_matches.pkatt),
+                        possession = COALESCE(EXCLUDED.possession, recent_matches.possession),
+                        xg = COALESCE(EXCLUDED.xg, recent_matches.xg),
+                        xga = COALESCE(EXCLUDED.xga, recent_matches.xga),
+                        scrape_date = EXCLUDED.scrape_date
+                    """), stat)
+                    successful_inserts += 1
+            except SQLAlchemyError as e:
+                logger.error(f"Error inserting match {stat['match_id']}: {e}")
+                failed_inserts += 1
+        
+        # Export recent matches to CSV for verification
+        with engine.connect() as conn:
+            query = text("SELECT * FROM recent_matches ORDER BY date DESC")
+            result = conn.execute(query)
+            matches_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+            matches_export = os.path.join(export_dir, "recent_matches_export.csv")
+            matches_df.to_csv(matches_export, index=False)
+            logger.info(f"Exported all recent matches to {matches_export}")
+        
+        logger.info(f"Successfully stored {successful_inserts} match records in database ({failed_inserts} failed)")
+        return {'success': True, 'matches_count': successful_inserts, 'failed_count': failed_inserts}
             
     except Exception as e:
         logger.exception(f"Error storing team stats in database: {e}")
@@ -485,6 +563,160 @@ def find_latest_fixtures_csv():
         logger.exception(f"Error finding fixtures CSV: {e}")
         return None
 
+def verify_team_data(team_name, engine, output_dir="data/verification"):
+    """Verify scraped data for a specific team"""
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Verifying data for team: {team_name}")
+        
+        results = {}
+        
+        # 1. Check if team exists in the database
+        with engine.connect() as conn:
+            team_result = conn.execute(text("SELECT * FROM teams WHERE team_name = :team"), {"team": team_name})
+            team_exists = team_result.rowcount > 0
+            results['team_exists'] = team_exists
+            
+            if team_exists:
+                # Export team data
+                team_data = pd.DataFrame([dict(zip(team_result.keys(), row)) for row in team_result])
+                team_file = os.path.join(output_dir, f"{team_name.replace(' ', '_')}_team_info.csv")
+                team_data.to_csv(team_file, index=False)
+                logger.info(f"Team exists in database: {team_exists}")
+            else:
+                logger.warning(f"Team '{team_name}' not found in database")
+        
+        # 2. Check fixtures with this team
+        with engine.connect() as conn:
+            fixture_query = text("""
+                SELECT * FROM fixtures 
+                WHERE home_team = :team OR away_team = :team
+                ORDER BY date DESC
+            """)
+            
+            fixture_result = conn.execute(fixture_query, {"team": team_name})
+            fixtures = [dict(zip(fixture_result.keys(), row)) for row in fixture_result]
+            
+            if fixtures:
+                fixtures_df = pd.DataFrame(fixtures)
+                fixtures_file = os.path.join(output_dir, f"{team_name.replace(' ', '_')}_fixtures.csv")
+                fixtures_df.to_csv(fixtures_file, index=False)
+                logger.info(f"Found {len(fixtures)} fixtures for {team_name}")
+                results['fixtures_count'] = len(fixtures)
+                results['fixtures_file'] = fixtures_file
+            else:
+                logger.warning(f"No fixtures found for team '{team_name}'")
+                results['fixtures_count'] = 0
+        
+        # 3. Check recent match data
+        with engine.connect() as conn:
+            match_query = text("""
+                SELECT * FROM recent_matches
+                WHERE team = :team
+                ORDER BY date DESC
+            """)
+            
+            match_result = conn.execute(match_query, {"team": team_name})
+            matches = [dict(zip(match_result.keys(), row)) for row in match_result]
+            
+            if matches:
+                matches_df = pd.DataFrame(matches)
+                matches_file = os.path.join(output_dir, f"{team_name.replace(' ', '_')}_matches.csv")
+                matches_df.to_csv(matches_file, index=False)
+                logger.info(f"Found {len(matches)} match records for {team_name}")
+                results['matches_count'] = len(matches)
+                results['matches_file'] = matches_file
+                
+                # Check for missing data
+                null_counts = matches_df.isnull().sum().to_dict()
+                results['missing_data'] = {k: v for k, v in null_counts.items() if v > 0}
+                
+                if results['missing_data']:
+                    logger.warning(f"Missing data detected in match records: {results['missing_data']}")
+                else:
+                    logger.info("All match data fields are complete")
+            else:
+                logger.warning(f"No match records found for team '{team_name}'")
+                results['matches_count'] = 0
+        
+        # 4. Fetch test data from FBref to compare
+        try:
+            from fbref_stats_collector import FBrefStatsCollector
+            
+            collector = FBrefStatsCollector(
+                output_dir=output_dir,
+                cache_dir="data/cache",
+                lookback=2,  # Just get a couple of matches for verification
+                batch_size=1,
+                delay_between_batches=5
+            )
+            
+            # Create a small test file with just this team
+            test_fixtures = [{
+                'date': datetime.now().strftime('%Y-%m-%d'),
+                'home_team': team_name,
+                'away_team': 'Test Opponent',
+                'league': 'Premier League',
+                'country': 'England'
+            }]
+            
+            test_file = os.path.join(output_dir, f"{team_name.replace(' ', '_')}_test_fixture.csv")
+            pd.DataFrame(test_fixtures).to_csv(test_file, index=False)
+            
+            # Run a test collection
+            test_result = collector.run(test_file, max_teams=1)
+            
+            if test_result:
+                logger.info(f"Successfully fetched test data for {team_name}")
+                results['test_success'] = True
+                results['test_file'] = test_result
+            else:
+                logger.warning(f"Failed to fetch test data for {team_name}")
+                results['test_success'] = False
+        except Exception as e:
+            logger.error(f"Error fetching test data: {e}")
+            results['test_success'] = False
+            results['test_error'] = str(e)
+        
+        # Generate summary report
+        summary = {
+            'team': team_name,
+            'verification_date': datetime.now().isoformat(),
+            'in_database': results.get('team_exists', False),
+            'fixtures_found': results.get('fixtures_count', 0),
+            'matches_found': results.get('matches_count', 0),
+            'test_successful': results.get('test_success', False),
+            'missing_data_fields': list(results.get('missing_data', {}).keys()),
+            'files_created': [
+                results.get('fixtures_file', ''),
+                results.get('matches_file', ''),
+                results.get('test_file', '')
+            ]
+        }
+        
+        summary_file = os.path.join(output_dir, f"{team_name.replace(' ', '_')}_verification_summary.json")
+        with open(summary_file, 'w') as f:
+            json.dump(summary, f, indent=2)
+        
+        logger.info(f"Verification summary saved to {summary_file}")
+        return {'success': True, 'summary': summary, 'summary_file': summary_file}
+        
+    except Exception as e:
+        logger.exception(f"Error verifying team data: {e}")
+        return {'success': False, 'error': str(e)}
+
+def prompt_for_date():
+    """Prompt the user to enter a specific date for scraping"""
+    while True:
+        try:
+            date_input = input("Enter date to scrape (YYYY-MM-DD) or 'today': ")
+            if date_input.lower() == 'today':
+                return date.today()
+            else:
+                return datetime.strptime(date_input, "%Y-%m-%d").date()
+        except ValueError:
+            print("Invalid date format. Please use YYYY-MM-DD format.")
+
 def run_full_pipeline(args):
     """Run the complete data pipeline"""
     logger.info("Starting full pipeline run")
@@ -500,6 +732,11 @@ def run_full_pipeline(args):
     }
     
     try:
+        # If user wants to input a specific date
+        if args.prompt_date:
+            args.specific_date = prompt_for_date()
+            logger.info(f"Using user-specified date: {args.specific_date}")
+        
         # Step 1: Fetch fixture data
         fixtures_csv = None
         
@@ -629,14 +866,29 @@ def main():
     parser.add_argument('--fixtures-only', action='store_true', help='Only fetch fixture data')
     parser.add_argument('--stats-only', action='store_true', help='Only collect team statistics')
     parser.add_argument('--specific-date', help='Process specific date (YYYY-MM-DD)')
+    parser.add_argument('--prompt-date', action='store_true', help='Prompt for a date to scrape')
     parser.add_argument('--date-range', type=int, default=7, help='Number of days to fetch (default: 7)')
     parser.add_argument('--max-teams', type=int, default=0, help='Maximum teams to process (0 for all)')
+    parser.add_argument('--verify-team', help='Verify data for a specific team')
     
     args = parser.parse_args()
     
     # Default to full run if no options specified
-    if not (args.full_run or args.fixtures_only or args.stats_only):
+    if not (args.full_run or args.fixtures_only or args.stats_only or args.verify_team):
+        args.prompt_date = True
         args.full_run = True
+    
+    # Verification mode
+    if args.verify_team:
+        engine = get_db_engine()
+        verify_result = verify_team_data(args.verify_team, engine)
+        if verify_result['success']:
+            print(f"Verification for {args.verify_team} completed successfully")
+            print(f"Summary: {verify_result['summary_file']}")
+            return 0
+        else:
+            print(f"Verification for {args.verify_team} failed: {verify_result.get('error')}")
+            return 1
     
     # Run pipeline
     results = run_full_pipeline(args)
